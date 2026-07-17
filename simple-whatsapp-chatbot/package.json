@@ -1,0 +1,39 @@
+{
+  "name": "simple-whatsapp-chatbot",
+  "version": "1.0.0",
+  "description": "Simple WhatsApp chatbot backend MVP",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "express",
+    "typescript",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.13",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "pino": "^10.0.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.15",
+    "@types/pg": "^8.20.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
