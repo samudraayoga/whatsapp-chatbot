@@ -6,6 +6,7 @@ import makeWASocket, {
   type ConnectionState,
   type WAMessage
 } from '@whiskeysockets/baileys';
+import { wrapSocket, type AntiBan } from 'baileys-antiban';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import P from 'pino';
@@ -19,9 +20,10 @@ import { maskPhoneNumber } from '../utils/phone.js';
 type WhatsAppStatus = 'connecting' | 'connected' | 'disconnected';
 
 const baileysLogger = P({ level: 'silent' });
+type ProtectedWASocket = ReturnType<typeof makeWASocket> & { antiban: AntiBan };
 
 export class WhatsAppService {
-  private socket: ReturnType<typeof makeWASocket> | null = null;
+  private socket: ProtectedWASocket | null = null;
   private status: WhatsAppStatus = 'disconnected';
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isShuttingDown = false;
@@ -47,12 +49,29 @@ export class WhatsAppService {
     this.status = 'connecting';
     logger.info('WhatsApp connecting');
 
-    const socket = makeWASocket({
+    const rawSocket = makeWASocket({
       auth: state,
       browser: Browsers.ubuntu('Simple WhatsApp Chatbot'),
       logger: baileysLogger,
       markOnlineOnConnect: false
     });
+
+    const socket = wrapSocket(
+      // The middleware's transport type accepts generic string group actions,
+      // while Baileys exposes a narrower ParticipantAction union at compile time.
+      rawSocket as any,
+      {
+        preset: 'conservative',
+        persist: path.resolve(env.WA_AUTH_PATH, 'antiban-state.json'),
+        logging: true
+      },
+      undefined,
+      {
+        autoRespondToIncoming: false,
+        // Balasan chatbot harus tetap persis seperti yang ditentukan aplikasi.
+        legitimacySignals: false
+      }
+    ) as unknown as ProtectedWASocket;
 
     this.socket = socket;
 
