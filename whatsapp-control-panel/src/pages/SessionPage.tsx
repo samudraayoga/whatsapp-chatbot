@@ -80,6 +80,8 @@ const disabledReasonCopy: Record<string, string> = {
   reconnect_in_progress: 'Reconnect sedang berjalan',
   sending_paused: 'Sending sedang paused',
   auth_reset_required: 'Auth reset oleh Admin diperlukan',
+  terminal_disconnect:
+    'WhatsApp menolak koneksi secara terminal; reconnect session tidak tersedia',
   service_shutting_down: 'Service sedang shutdown',
   reconnect_not_available: 'Reconnect tidak tersedia'
 };
@@ -197,7 +199,17 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
     );
   }
 
-  const copy = stateCopy[session.state];
+  const terminalDisconnect =
+    session.state === 'disconnected' &&
+    session.lastDisconnect?.classification === 'fatal';
+  const copy = terminalDisconnect
+    ? {
+        title: 'Pairing rejected',
+        description:
+          'WhatsApp menutup registration handshake sebelum QR diterbitkan.',
+        tone: 'danger' as const
+      }
+    : stateCopy[session.state];
   const actionError = reconnectMutation.error ?? pauseMutation.error;
 
   return (
@@ -321,14 +333,24 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
               <strong>
                 {session.state === 'connected'
                   ? 'Pairing sudah selesai'
+                  : terminalDisconnect
+                    ? 'Pairing ditolak WhatsApp'
                   : canReconnect
                     ? 'QR belum tersedia'
                     : 'Pairing membutuhkan permission operator'}
               </strong>
-              <p>
-                QR hanya ditampilkan ketika backend melaporkan state
-                <code> qr_required</code>.
-              </p>
+              {terminalDisconnect ? (
+                <p>
+                  Koneksi dihentikan dengan kode{' '}
+                  <code>{session.lastDisconnect?.code ?? 'unknown'}</code> sebelum
+                  backend menerima payload QR.
+                </p>
+              ) : (
+                <p>
+                  QR hanya ditampilkan ketika backend melaporkan state
+                  <code> qr_required</code>.
+                </p>
+              )}
             </div>
           )}
         </article>

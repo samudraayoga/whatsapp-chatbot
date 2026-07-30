@@ -2,6 +2,7 @@ import { DisconnectReason } from '@whiskeysockets/baileys';
 import {
   getReconnectDelayMs,
   isTerminalDisconnect,
+  resolveReconnectEligibility,
   shouldReconnect
 } from '../src/services/whatsapp.service.js';
 
@@ -34,5 +35,35 @@ describe('WhatsApp reconnect policy', () => {
     expect(getReconnectDelayMs(DisconnectReason.unavailableService)).toBe(60_000);
     expect(getReconnectDelayMs(429)).toBe(300_000);
     expect(getReconnectDelayMs(undefined)).toBe(15_000);
+  });
+
+  it('never offers manual reconnect after a fatal disconnect', () => {
+    expect(
+      resolveReconnectEligibility({
+        state: 'disconnected',
+        isShuttingDown: false,
+        hasScheduledReconnect: false,
+        reconnectInFlight: false,
+        lastDisconnectClassification: 'fatal'
+      })
+    ).toEqual({
+      eligible: false,
+      disabledReason: 'terminal_disconnect'
+    });
+  });
+
+  it('still offers manual reconnect after a recoverable disconnect', () => {
+    expect(
+      resolveReconnectEligibility({
+        state: 'disconnected',
+        isShuttingDown: false,
+        hasScheduledReconnect: false,
+        reconnectInFlight: false,
+        lastDisconnectClassification: 'recoverable'
+      })
+    ).toEqual({
+      eligible: true,
+      disabledReason: null
+    });
   });
 });

@@ -36,18 +36,20 @@ export type WhatsAppOperationalState =
   | 'disconnected'
   | 'shutting_down';
 
+export type WhatsAppDisconnectClassification =
+  | 'recoverable'
+  | 'logged_out'
+  | 'bad_session'
+  | 'fatal'
+  | 'unknown';
+
 export type WhatsAppOperationalStatus = {
   state: WhatsAppOperationalState;
   connectedSince: string | null;
   lastDisconnect: {
     code?: number;
     reason: string;
-    classification:
-      | 'recoverable'
-      | 'logged_out'
-      | 'bad_session'
-      | 'fatal'
-      | 'unknown';
+    classification: WhatsAppDisconnectClassification;
     occurredAt: string;
   } | null;
   reconnect: {
@@ -116,6 +118,51 @@ export const getReconnectDelayMs = (
   return 15_000;
 };
 
+export const resolveReconnectEligibility = (input: {
+  state: WhatsAppOperationalState;
+  isShuttingDown: boolean;
+  hasScheduledReconnect: boolean;
+  reconnectInFlight: boolean;
+  lastDisconnectClassification?: WhatsAppDisconnectClassification;
+}): { eligible: boolean; disabledReason: string | null } => {
+  if (input.isShuttingDown) {
+    return { eligible: false, disabledReason: 'service_shutting_down' };
+  }
+
+  if (
+    input.state === 'disconnected' &&
+    input.lastDisconnectClassification === 'fatal'
+  ) {
+    return { eligible: false, disabledReason: 'terminal_disconnect' };
+  }
+
+  if (
+    input.state === 'disconnected' ||
+    (input.state === 'reconnecting' &&
+      input.hasScheduledReconnect &&
+      !input.reconnectInFlight)
+  ) {
+    return { eligible: true, disabledReason: null };
+  }
+
+  const reasons: Partial<Record<WhatsAppOperationalState, string>> = {
+    starting: 'session_starting',
+    connecting: 'connection_in_progress',
+    qr_required: 'pairing_required',
+    connected: 'already_connected',
+    reconnecting: 'reconnect_in_progress',
+    paused: 'sending_paused',
+    logged_out: 'auth_reset_required',
+    bad_session: 'auth_reset_required',
+    shutting_down: 'service_shutting_down'
+  };
+
+  return {
+    eligible: false,
+    disabledReason: reasons[input.state] ?? 'reconnect_not_available'
+  };
+};
+
 export class WhatsAppService {
   private socket: ProtectedWASocket | null = null;
   private status: WhatsAppStatus = 'disconnected';
@@ -124,12 +171,7 @@ export class WhatsAppService {
   private lastDisconnect: {
     code?: number;
     reason: string;
-    classification:
-      | 'recoverable'
-      | 'logged_out'
-      | 'bad_session'
-      | 'fatal'
-      | 'unknown';
+    classification: WhatsAppDisconnectClassification;
     occurredAt: string;
   } | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -669,35 +711,13 @@ export class WhatsAppService {
   private getReconnectEligibility(
     state: WhatsAppOperationalState
   ): { eligible: boolean; disabledReason: string | null } {
-    if (this.isShuttingDown) {
-      return { eligible: false, disabledReason: 'service_shutting_down' };
-    }
-
-    if (
-      state === 'disconnected' ||
-      (state === 'reconnecting' &&
-        Boolean(this.reconnectTimer) &&
-        !this.reconnectInFlight)
-    ) {
-      return { eligible: true, disabledReason: null };
-    }
-
-    const reasons: Partial<Record<WhatsAppOperationalState, string>> = {
-      starting: 'session_starting',
-      connecting: 'connection_in_progress',
-      qr_required: 'pairing_required',
-      connected: 'already_connected',
-      reconnecting: 'reconnect_in_progress',
-      paused: 'sending_paused',
-      logged_out: 'auth_reset_required',
-      bad_session: 'auth_reset_required',
-      shutting_down: 'service_shutting_down'
-    };
-
-    return {
-      eligible: false,
-      disabledReason: reasons[state] ?? 'reconnect_not_available'
-    };
+    return resolveReconnectEligibility({
+      state,
+      isShuttingDown: this.isShuttingDown,
+      hasScheduledReconnect: Boolean(this.reconnectTimer),
+      reconnectInFlight: this.reconnectInFlight,
+      lastDisconnectClassification: this.lastDisconnect?.classification
+    });
   }
 
   private setPairingQr(value: string): void {

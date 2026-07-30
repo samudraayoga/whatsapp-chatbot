@@ -95,6 +95,46 @@ describe('SessionPage', () => {
     expect(reconnectRequests).toBe(1);
   });
 
+  it('disables reconnect and explains a terminal pairing rejection', async () => {
+    const fatalSession = structuredClone(disconnectedOverview);
+    fatalSession.data.session.lastDisconnect = {
+      code: 405,
+      reason: 'Connection Failure',
+      classification: 'fatal',
+      occurredAt: '2026-07-30T08:51:26.199Z'
+    };
+    fatalSession.data.session.reconnect = {
+      attempt: 1,
+      nextRetryAt: null,
+      eligible: false,
+      disabledReason: 'terminal_disconnect'
+    };
+    server.use(
+      http.get('*/api/admin/v1/session', () =>
+        HttpResponse.json({
+          data: {
+            session: fatalSession.data.session,
+            readiness: fatalSession.data.readiness
+          },
+          meta: fatalSession.meta
+        })
+      )
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText('Pairing ditolak WhatsApp')
+    ).toBeInTheDocument();
+    expect(screen.getByText(/kode/)).toHaveTextContent('405');
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
+    expect(
+      screen.getByText(
+        'WhatsApp menolak koneksi secara terminal; reconnect session tidak tersedia'
+      )
+    ).toBeInTheDocument();
+  });
+
   it('requires confirmation before applying emergency pause', async () => {
     const user = userEvent.setup();
     setOverviewScenario('healthy');
