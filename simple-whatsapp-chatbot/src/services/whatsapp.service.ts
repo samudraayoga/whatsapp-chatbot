@@ -21,6 +21,7 @@ import { OperationalEventService } from './operational-event.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { maskPhoneNumber } from '../utils/phone.js';
+import { sanitizeOperationalError } from '../utils/sanitize.js';
 
 type WhatsAppStatus = 'connecting' | 'connected' | 'disconnected';
 export type WhatsAppOperationalState =
@@ -41,7 +42,12 @@ export type WhatsAppOperationalStatus = {
   lastDisconnect: {
     code?: number;
     reason: string;
-    classification: 'recoverable' | 'logged_out' | 'bad_session' | 'unknown';
+    classification:
+      | 'recoverable'
+      | 'logged_out'
+      | 'bad_session'
+      | 'fatal'
+      | 'unknown';
     occurredAt: string;
   } | null;
   reconnect: {
@@ -57,9 +63,18 @@ export type WhatsAppOperationalStatus = {
   credentialUpdatedAt: string | null;
 };
 
+export type SendingBlock = {
+  code:
+    | 'MANUAL_PAUSE'
+    | 'HEALTH_AUTO_PAUSE'
+    | 'RECOVERY_PAUSED'
+    | 'RECOVERY_DEAD'
+    | 'WARMUP_LIMIT';
+  retryAfterMs: number;
+};
+
 const baileysLogger = P({ level: 'silent' });
 type ProtectedWASocket = ReturnType<typeof makeWASocket> & { antiban: AntiBan };
-const RECONNECT_DELAY_MS = 5_000;
 export const PAIRING_QR_TTL_MS = 60_000;
 
 export class ReconnectNotAllowedError extends Error {
@@ -69,13 +84,37 @@ export class ReconnectNotAllowedError extends Error {
   }
 }
 
+const fatalDisconnectCodes = new Set<number>([
+  DisconnectReason.loggedOut,
+  DisconnectReason.badSession,
+  DisconnectReason.forbidden,
+  DisconnectReason.multideviceMismatch,
+  DisconnectReason.connectionReplaced,
+  405
+]);
+
 export const isTerminalDisconnect = (statusCode: number | undefined): boolean =>
-  statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.badSession;
+  statusCode !== undefined && fatalDisconnectCodes.has(statusCode);
 
 export const shouldReconnect = (
   statusCode: number | undefined,
   isShuttingDown: boolean
 ): boolean => !isShuttingDown && !isTerminalDisconnect(statusCode);
+
+export const getReconnectDelayMs = (
+  statusCode: number | undefined
+): number => {
+  if (statusCode === DisconnectReason.unavailableService) return 60_000;
+  if (statusCode === 429) return 300_000;
+  if (statusCode === DisconnectReason.restartRequired) return 2_000;
+  if (
+    statusCode === DisconnectReason.timedOut ||
+    statusCode === DisconnectReason.connectionClosed
+  ) {
+    return 5_000;
+  }
+  return 15_000;
+};
 
 export class WhatsAppService {
   private socket: ProtectedWASocket | null = null;
@@ -85,7 +124,12 @@ export class WhatsAppService {
   private lastDisconnect: {
     code?: number;
     reason: string;
-    classification: 'recoverable' | 'logged_out' | 'bad_session' | 'unknown';
+    classification:
+      | 'recoverable'
+      | 'logged_out'
+      | 'bad_session'
+      | 'fatal'
+      | 'unknown';
     occurredAt: string;
   } | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -155,6 +199,13 @@ export class WhatsAppService {
   getProtectionSnapshot(): {
     stats: AntiBanStats;
     config: ResolvedConfig;
+    timelock: {
+      isActive: boolean;
+      enforcementType?: string;
+      expiresAt?: Date;
+      detectedAt?: Date;
+      errorCount: number;
+    };
   } | null {
     if (!this.socket) {
       return null;
@@ -162,8 +213,48 @@ export class WhatsAppService {
 
     return {
       stats: this.socket.antiban.getStats(),
-      config: this.socket.antiban.getConfig()
+      config: this.socket.antiban.getConfig(),
+      timelock: this.socket.antiban.timelock.getState()
     };
+  }
+
+  getSendingBlocks(): SendingBlock[] {
+    const blocks: SendingBlock[] = [];
+    if (this.manualPaused) {
+      blocks.push({ code: 'MANUAL_PAUSE', retryAfterMs: 30_000 });
+    }
+    const protection = this.getProtectionSnapshot();
+    if (!protection) return blocks;
+    const riskOrder = ['low', 'medium', 'high', 'critical'];
+    if (protection.stats.banRecovery?.phase === 'dead') {
+      blocks.push({ code: 'RECOVERY_DEAD', retryAfterMs: 60 * 60 * 1000 });
+    }
+    if (protection.stats.banRecovery?.phase === 'paused') {
+      blocks.push({
+        code: 'RECOVERY_PAUSED',
+        retryAfterMs: Math.max(
+          30_000,
+          protection.stats.banRecovery.pauseRemainingMs ?? 60_000
+        )
+      });
+    }
+    if (
+      riskOrder.indexOf(protection.stats.health.risk) >=
+      riskOrder.indexOf(protection.config.autoPauseAt)
+    ) {
+      blocks.push({ code: 'HEALTH_AUTO_PAUSE', retryAfterMs: 60_000 });
+    }
+    if (
+      protection.stats.warmUp.todaySent >=
+      protection.stats.warmUp.todayLimit
+    ) {
+      blocks.push({ code: 'WARMUP_LIMIT', retryAfterMs: 60 * 60 * 1000 });
+    }
+    return blocks;
+  }
+
+  getSendingBlock(): SendingBlock | null {
+    return this.getSendingBlocks()[0] ?? null;
   }
 
   async connect(): Promise<void> {
@@ -199,7 +290,7 @@ export class WhatsAppService {
       {
         preset: 'conservative',
         persist: path.resolve(env.WA_AUTH_PATH, 'antiban-state.json'),
-        logging: true
+        logging: false
       },
       undefined,
       {
@@ -216,9 +307,15 @@ export class WhatsAppService {
     }
 
     socket.ev.on('creds.update', () => {
-      void saveCreds().then(() => {
-        this.credentialUpdatedAt = new Date().toISOString();
-      });
+      void saveCreds()
+        .then(() => {
+          this.credentialUpdatedAt = new Date().toISOString();
+        })
+        .catch((error) => {
+          logger.error('Failed to persist WhatsApp credentials', {
+            error: sanitizeOperationalError(error)
+          });
+        });
     });
     socket.ev.on('connection.update', (update) => {
       void this.handleConnectionUpdate(update);
@@ -276,15 +373,17 @@ export class WhatsAppService {
         update.lastDisconnect?.error instanceof Boom
           ? update.lastDisconnect.error.output.statusCode
           : undefined;
-      const disconnectMessage =
-        update.lastDisconnect?.error instanceof Error
-          ? update.lastDisconnect.error.message
-          : 'Unknown disconnect error';
+      const disconnectMessage = sanitizeOperationalError(
+        update.lastDisconnect?.error,
+        'Unknown disconnect error'
+      );
       const classification =
         statusCode === DisconnectReason.loggedOut
           ? ('logged_out' as const)
           : statusCode === DisconnectReason.badSession
             ? ('bad_session' as const)
+            : isTerminalDisconnect(statusCode)
+              ? ('fatal' as const)
             : statusCode === undefined
               ? ('unknown' as const)
               : ('recoverable' as const);
@@ -303,14 +402,24 @@ export class WhatsAppService {
       if (isTerminalDisconnect(statusCode)) {
         this.clearReconnectTimer();
         this.operationalState =
-          statusCode === DisconnectReason.loggedOut ? 'logged_out' : 'bad_session';
+          statusCode === DisconnectReason.loggedOut
+            ? 'logged_out'
+            : statusCode === DisconnectReason.badSession
+              ? 'bad_session'
+              : 'disconnected';
         this.nextRetryAt = null;
         this.clearPairingQr();
-        this.publishOperationalEvent(`session.${this.operationalState}`, 'critical', {
-          statusCode: statusCode ?? null,
-          classification
-        });
-        logger.warn('WhatsApp session is logged out or invalid. Scan QR again after clearing auth session.');
+        this.publishOperationalEvent(
+          this.operationalState === 'disconnected'
+            ? 'session.fatal_disconnect'
+            : `session.${this.operationalState}`,
+          'critical',
+          {
+            statusCode: statusCode ?? null,
+            classification
+          }
+        );
+        logger.warn('WhatsApp automatic reconnect stopped after a terminal disconnect');
         return;
       }
 
@@ -319,21 +428,22 @@ export class WhatsAppService {
           statusCode: statusCode ?? null,
           classification
         });
-        this.scheduleReconnect();
+        this.scheduleReconnect(statusCode);
       } else {
         this.operationalState = 'disconnected';
       }
     }
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(statusCode?: number): void {
     if (this.reconnectTimer) {
       return;
     }
 
+    const reconnectDelayMs = getReconnectDelayMs(statusCode);
     this.operationalState = 'reconnecting';
     this.reconnectAttempt += 1;
-    this.nextRetryAt = new Date(Date.now() + RECONNECT_DELAY_MS).toISOString();
+    this.nextRetryAt = new Date(Date.now() + reconnectDelayMs).toISOString();
     this.publishOperationalEvent('session.reconnect_scheduled', 'warning', {
       attempt: this.reconnectAttempt,
       nextRetryAt: this.nextRetryAt
@@ -345,12 +455,12 @@ export class WhatsAppService {
       this.reconnectInFlight = true;
       void this.startSocket().catch((error) => {
         this.reconnectInFlight = false;
-        const message = error instanceof Error ? error.message : 'Unknown reconnect error';
+        const message = sanitizeOperationalError(error, 'Unknown reconnect error');
         logger.error('Failed to reconnect WhatsApp', { error: message });
         this.operationalState = 'disconnected';
         this.scheduleReconnect();
       });
-    }, RECONNECT_DELAY_MS);
+    }, reconnectDelayMs);
   }
 
   private clearReconnectTimer(): void {
@@ -409,6 +519,26 @@ export class WhatsAppService {
     });
   }
 
+  resumeSending(): void {
+    this.manualPaused = false;
+    this.socket?.antiban.resume();
+    this.publishOperationalEvent('safety.resume_requested', 'info', {
+      source: 'admin'
+    });
+  }
+
+  restoreManualPause(paused: boolean): void {
+    this.manualPaused = paused;
+  }
+
+  resetSafetyState(): void {
+    this.socket?.antiban.reset();
+    if (this.manualPaused) this.socket?.antiban.pause();
+    this.publishOperationalEvent('safety.state_reset', 'warning', {
+      source: 'admin'
+    });
+  }
+
   private extractText(message: WAMessage): string {
     return (
       message.message?.conversation ??
@@ -426,7 +556,10 @@ export class WhatsAppService {
       try {
         await this.processIncomingMessage(message);
       } catch (error) {
-        const content = error instanceof Error ? error.message : 'Unknown message processing error';
+        const content = sanitizeOperationalError(
+          error,
+          'Unknown message processing error'
+        );
         logger.error('Failed to process incoming WhatsApp message', { error: content });
       }
     }
@@ -454,16 +587,22 @@ export class WhatsAppService {
       return;
     }
 
+    const evaluation = await this.chatbotService.evaluate(text);
     const savedIncoming = await this.messageService.saveMessage({
       whatsappMessageId,
       whatsappJid: remoteJid,
       direction: 'incoming',
       content: text,
-      displayName: message.pushName ?? null
+      displayName: message.pushName ?? null,
+      createHandoff: evaluation.matchedRule.action === 'create_handoff',
+      metadata: {
+        chatbotVersionId: evaluation.versionId,
+        chatbotRuleId: evaluation.matchedRule.id
+      }
     });
 
     if (!savedIncoming.inserted) {
-      logger.warn('Duplicate incoming WhatsApp message ignored', { whatsappMessageId });
+      logger.warn('Duplicate incoming WhatsApp message ignored');
       return;
     }
 
@@ -471,15 +610,18 @@ export class WhatsAppService {
       phone: maskPhoneNumber(remoteJid.replace(/@.+$/, ''))
     });
 
-    const reply = this.chatbotService.getReply(text);
-    const response = await this.sendText(remoteJid, reply);
+    const response = await this.sendText(remoteJid, evaluation.response);
 
     await this.messageService.saveMessage({
       whatsappMessageId: response?.key.id ?? null,
       whatsappJid: remoteJid,
       direction: 'outgoing',
-      content: reply,
-      status: 'sent'
+      content: evaluation.response,
+      status: 'sent',
+      metadata: {
+        chatbotVersionId: evaluation.versionId,
+        chatbotRuleId: evaluation.matchedRule.id
+      }
     });
   }
 
@@ -513,7 +655,7 @@ export class WhatsAppService {
       try {
         await this.socket.ws.close();
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown close error';
+        const message = sanitizeOperationalError(error, 'Unknown close error');
         logger.error('Failed to close WhatsApp socket cleanly', { error: message });
       }
     }
@@ -597,6 +739,6 @@ export class WhatsAppService {
     severity: 'info' | 'warning' | 'critical' = 'info',
     data: Record<string, unknown> = {}
   ): void {
-    this.operationalEvents?.publish({ type, severity, data });
+    void this.operationalEvents?.publish({ type, severity, data });
   }
 }

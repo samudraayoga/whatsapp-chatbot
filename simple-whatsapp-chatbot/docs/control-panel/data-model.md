@@ -1,8 +1,8 @@
 # Data Model — Control Panel
 
-Tabel identity/session admin, audit, operational events, kolom identity contact,
-index timeline, dan `handoff_tasks` sudah aktif pada Sprint 1–3. Tabel
-channel/outbox dan logical-message redesign tetap rancangan sprint berikutnya.
+Tabel identity/session admin, audit, operational events, identity contact,
+`handoff_tasks`, durable outbox, idempotency, dan message events sudah aktif pada
+Sprint 1–4. `channel_sessions` tetap rancangan sampai multi-session dikerjakan.
 
 ## Prinsip migration
 
@@ -23,6 +23,7 @@ logical_messages 1 ─── * message_events
 contacts         1 ─── * handoff_tasks
 admin_users      1 ─── * audit_logs
 operational_events     (append-only timeline)
+safety_control_state   (singleton durable manual pause)
 ```
 
 ## `channel_sessions`
@@ -40,6 +41,25 @@ operational_events     (append-only timeline)
 | `updated_at` | TIMESTAMPTZ | |
 
 Raw credential dan QR tidak disimpan pada tabel ini.
+
+## `safety_control_state`
+
+State kontrol manual disimpan sebagai singleton agar emergency pause tidak
+hilang ketika process/backend restart.
+
+| Column | Type | Catatan |
+|---|---|---|
+| `singleton` | BOOLEAN | Primary key, wajib `TRUE` |
+| `manual_paused` | BOOLEAN | Sumber state pause manual |
+| `reason` | TEXT nullable | Alasan operator/admin terakhir |
+| `changed_by` | UUID nullable | FK ke `admin_users` |
+| `updated_at` | TIMESTAMPTZ | Waktu perubahan terakhir |
+
+Resume mengubah singleton lebih dulu lalu melepas pause in-memory. Recovery
+`paused`/`dead` dan timelock aktif tetap menjadi hard guard; reset tidak
+menghapus guard tersebut dan selalu meninggalkan `manual_paused=TRUE`. Reset
+juga mensyaratkan counter rate harian dan warm-up bernilai nol agar tidak dapat
+dipakai untuk memperpanjang budget pengiriman.
 
 ## Contact identity
 
@@ -76,6 +96,11 @@ Backfill:
 Jangan melakukan auto-merge contact conflict.
 
 ## `logical_messages`
+
+Implementasi incremental Sprint 4 mempromosikan tabel existing `messages` sebagai
+logical-message record dengan menambahkan `logical_id UUID`, lifecycle timestamp,
+priority, error, metadata, dan client request ID. Ini menjaga foreign key dan
+histori Sprint 3 tanpa menyalin konten pesan ke tabel paralel.
 
 | Column | Type | Catatan |
 |---|---|---|
@@ -121,7 +146,7 @@ accepted/queued/scheduled/safety_delayed → canceled
 | Column | Type | Catatan |
 |---|---|---|
 | `id` | UUID | |
-| `logical_message_id` | UUID UNIQUE | |
+| `message_id` | BIGINT UNIQUE | Referensi internal ke `messages` |
 | `state` | TEXT | queued/leased/completed/failed/canceled |
 | `priority` | TEXT | high/normal/low |
 | `attempts` | INTEGER | |
@@ -135,6 +160,9 @@ accepted/queued/scheduled/safety_delayed → canceled
 
 Worker mengambil item menggunakan row lock/skip-locked atau pola lease ekuivalen. Stale lease dapat diklaim kembali setelah expiry.
 
+Untuk mencegah duplicate provider send, stale lease yang sudah memasuki fase
+`sending` dipindahkan ke `unknown_outcome`, bukan dikirim ulang otomatis.
+
 ## `idempotency_keys`
 
 | Column | Type |
@@ -142,7 +170,7 @@ Worker mengambil item menggunakan row lock/skip-locked atau pola lease ekuivalen
 | `scope` | TEXT |
 | `key_hash` | TEXT |
 | `request_hash` | TEXT |
-| `resource_id` | UUID nullable |
+| `resource_id` | BIGINT nullable |
 | `response_status` | INTEGER nullable |
 | `response_body` | JSONB nullable |
 | `expires_at` | TIMESTAMPTZ |
@@ -245,3 +273,51 @@ COMMIT
 ```
 
 WhatsApp send terjadi setelah commit. Jika provider mungkin menerima tetapi persistence final gagal, state menjadi `unknown_outcome` dan tidak di-retry secara buta.
+
+## `chatbot_rule_versions`
+
+Satu row merepresentasikan snapshot konfigurasi. Hanya satu row boleh memiliki
+status `published`; rules milik version published/archived immutable.
+
+| Column | Type |
+|---|---|
+| `id` | UUID |
+| `version_number` | INTEGER UNIQUE |
+| `name` | VARCHAR(150) |
+| `status` | draft / published / archived |
+| `change_summary` | TEXT nullable |
+| `based_on_version_id` | UUID nullable |
+| `revision` | INTEGER |
+| `content_hash` | CHAR(64) nullable |
+| `created_by` | UUID nullable |
+| `published_by` | UUID nullable |
+| `created_at` | TIMESTAMPTZ |
+| `updated_at` | TIMESTAMPTZ |
+| `published_at` | TIMESTAMPTZ nullable |
+
+`revision` dipakai untuk optimistic concurrency ketika menyimpan draft.
+`expectedActiveVersionId` dan advisory transaction lock mencegah dua publish
+bersamaan menimpa keputusan Admin lain.
+
+## `chatbot_rules`
+
+| Column | Type |
+|---|---|
+| `id` | UUID |
+| `version_id` | UUID |
+| `trigger_type` | exact / alias / empty / fallback |
+| `trigger_values` | JSONB string array |
+| `response_text` | TEXT |
+| `priority` | INTEGER |
+| `enabled` | BOOLEAN |
+| `action` | reply / create_handoff |
+| `created_at` | TIMESTAMPTZ |
+| `updated_at` | TIMESTAMPTZ |
+
+Unique `(version_id, priority)`. Application validation juga mewajibkan satu
+empty rule aktif, satu fallback aktif, trigger normalized unik, dan response
+1–4.096 karakter.
+
+Incoming dan outgoing message dari runtime chatbot menyimpan
+`chatbotVersionId` dan `chatbotRuleId` di `messages.metadata`. Dengan begitu
+response production dapat ditelusuri ke snapshot rule yang aktif saat evaluasi.

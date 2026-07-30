@@ -3,7 +3,10 @@ import type { AdminIdentity } from '../auth/types.js';
 import { env } from '../config/env.js';
 import { AppError } from '../middleware/error.middleware.js';
 import { AdminAuthService } from '../services/admin-auth.service.js';
-import { AuditService } from '../services/audit.service.js';
+import {
+  AuditService,
+  recordAuditOutcome
+} from '../services/audit.service.js';
 
 const SESSION_COOKIE = 'admin_session';
 const CSRF_COOKIE = 'admin_csrf';
@@ -72,6 +75,21 @@ export class AdminAuthController {
       }
 
       const maxAge = result.expiresAt.getTime() - Date.now();
+      try {
+        await this.auditService.record({
+          actorUserId: result.user.id,
+          action: 'auth.login_succeeded',
+          resourceType: 'admin_session',
+          requestId: request.requestId,
+          ipAddress: request.ip,
+          userAgent: request.get('user-agent')
+        });
+      } catch (error) {
+        await this.authService
+          .revokeSession(result.sessionId)
+          .catch(() => undefined);
+        throw error;
+      }
       response.cookie(SESSION_COOKIE, result.sessionToken, {
         ...baseCookieOptions,
         httpOnly: true,
@@ -81,15 +99,6 @@ export class AdminAuthController {
         ...baseCookieOptions,
         httpOnly: false,
         maxAge
-      });
-
-      await this.auditService.record({
-        actorUserId: result.user.id,
-        action: 'auth.login_succeeded',
-        resourceType: 'admin_session',
-        requestId: request.requestId,
-        ipAddress: request.ip,
-        userAgent: request.get('user-agent')
       });
 
       response.json({
@@ -121,8 +130,17 @@ export class AdminAuthController {
   ): Promise<void> => {
     try {
       const auth = request.adminAuth!;
-      await this.authService.revokeSession(auth.sessionId);
       await this.auditService.record({
+        actorUserId: auth.id,
+        action: 'auth.logout_requested',
+        resourceType: 'admin_session',
+        resourceId: auth.sessionId,
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
+      await this.authService.revokeSession(auth.sessionId);
+      await recordAuditOutcome(this.auditService, {
         actorUserId: auth.id,
         action: 'auth.logout',
         resourceType: 'admin_session',

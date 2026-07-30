@@ -2,7 +2,7 @@
 
 ## Ringkasan
 
-Workspace ini berisi dua proyek yang saling terhubung:
+Workspace ini berisi tiga proyek yang saling terhubung:
 
 1. `simple-whatsapp-chatbot`
    - Backend chatbot WhatsApp.
@@ -12,6 +12,12 @@ Workspace ini berisi dua proyek yang saling terhubung:
 2. `baileys-antiban`
    - Library middleware untuk Baileys.
    - Melindungi pengiriman pesan menggunakan rate limit, warm-up, health monitoring, timelock guard, dan mekanisme anti-ban lainnya.
+
+3. `whatsapp-control-panel`
+   - React control panel untuk admin/operator.
+   - Menggunakan same-origin Admin API melalui reverse proxy Nginx di production.
+   - Menangani session pairing, health, contacts, message timeline, durable
+     outbox, chatbot rules, handoff, dan Safety Center tanpa terminal.
 
 Dependency antara keduanya didefinisikan secara lokal:
 
@@ -35,7 +41,19 @@ WhatsAppService
    ├── ChatbotService
    ├── MessageService ──► PostgreSQL
    └── REST API ────────► Express
+
+Admin/Operator
+        │ HTTPS
+        ▼
+React + Nginx ── /api/* ──► Admin API
+                                ├── Auth/RBAC/CSRF/Audit
+                                ├── Outbox worker
+                                ├── Chatbot rule versions
+                                └── PostgreSQL
 ```
+
+Dokumen deployment yang menjadi rujukan operasional saat ini adalah
+`DEPLOYMENT.md`; hasil gate rilis terakhir ada di `RELEASE_READINESS.md`.
 
 ---
 
@@ -53,11 +71,12 @@ Saat aplikasi dijalankan, prosesnya adalah:
 2. Memastikan konfigurasi wajib tersedia.
 3. Membuat koneksi PostgreSQL.
 4. Menjalankan migration database.
-5. Membuat koneksi WhatsApp melalui Baileys.
-6. Membungkus socket Baileys dengan `baileys-antiban`.
-7. Membuat Express application.
-8. Membuka HTTP server.
-9. Memasang graceful shutdown untuk `SIGINT` dan `SIGTERM`.
+5. Memanaskan cache chatbot rules dan merestore manual safety state.
+6. Memastikan bootstrap admin tersedia dan membersihkan session kedaluwarsa.
+7. Membuat koneksi WhatsApp lalu membungkus socket dengan `baileys-antiban`.
+8. Menyalakan durable outbox worker.
+9. Membuat Express application dan membuka HTTP server.
+10. Memasang graceful shutdown untuk `SIGINT` dan `SIGTERM`.
 
 Alur sederhananya:
 
@@ -66,7 +85,11 @@ startServer()
   │
   ├── connectDatabase()
   ├── runMigrations()
+  ├── chatbotService.warmCache()
+  ├── safetyCenterService.restoreManualState()
+  ├── adminAuthService.ensureBootstrapAdmin()
   ├── whatsappService.connect()
+  ├── outboxWorker.start()
   ├── createApp()
   └── app.listen(PORT)
 ```
@@ -112,9 +135,20 @@ POSTGRES_PASSWORD=
 
 API_KEY=
 WA_AUTH_PATH=
+
+ADMIN_BOOTSTRAP_USERNAME=
+ADMIN_BOOTSTRAP_PASSWORD=
+ADMIN_BOOTSTRAP_DISPLAY_NAME=
+ADMIN_SESSION_TTL_HOURS=
+
+SAFETY_RESET_ENABLED=
+TRUST_PROXY_HOPS=
+ADMIN_ALLOWED_ORIGINS=
 ```
 
 Aplikasi langsung melempar error saat startup apabila salah satu konfigurasi wajib tidak tersedia.
+Pada `NODE_ENV=production`, secret placeholder atau password/API key yang terlalu
+pendek juga ditolak sebelum server dibuka.
 
 ---
 

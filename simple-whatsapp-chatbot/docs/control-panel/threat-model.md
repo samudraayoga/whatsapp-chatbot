@@ -83,10 +83,24 @@ Admin browser
 - SSE hanya membawa snapshot operasional tersanitasi; polling 10 detik menjadi fallback.
 - Event operasional minimum disimpan tanpa credential atau raw QR.
 
-## Security backlog Sprint 3+
+## Security controls implemented Sprint 6
+
+- Operator hanya mendapat `safety.pause`; `safety.resume` dan `session.reset`
+  tetap permission Admin.
+- Resume/reset memerlukan CSRF, mutation rate limit, alasan 5–500 karakter,
+  exact acknowledgement/confirmation, dan verifikasi password saat ini.
+- Recovery `paused`/`dead` dan timelock aktif tidak dapat dilewati oleh resume.
+- Reset default-off melalui `SAFETY_RESET_ENABLED`, memerlukan eligibility, dan
+  tetap meninggalkan sending dalam manual pause.
+- Pause/resume/reset menyimpan actor, alasan, before/after state, request ID, IP,
+  dan user agent pada audit.
+- Safety delay menyimpan reason code dan rekomendasi tersanitasi pada message
+  event; raw error/JID tidak dipantulkan ke UI.
+- Manual pause dipersist di PostgreSQL dan direstore sebelum koneksi WhatsApp.
+
+## Security backlog Sprint 7+
 
 - Tambahkan origin validation pada seluruh mutation.
 - Rate limit mutation operasional per user.
-- Step-up authentication untuk reset/re-pair.
 - OIDC/SSO dan MFA untuk production.
 - Dependency and secret scan pada CI.

@@ -16,6 +16,7 @@ export type AuthenticatedAdmin = AdminIdentity & {
 
 export type LoginResult = {
   user: AdminIdentity;
+  sessionId: string;
   sessionToken: string;
   csrfToken: string;
   expiresAt: Date;

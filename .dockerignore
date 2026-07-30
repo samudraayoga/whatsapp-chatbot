@@ -1,0 +1,15 @@
+.git
+.github
+**/.DS_Store
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+simple-whatsapp-chatbot/auth
+**/coverage
+simple-whatsapp-chatbot/dist
+whatsapp-control-panel/dist
+baileys-antiban/.git
+baileys-antiban/tests
+baileys-antiban/examples
+baileys-antiban/coverage

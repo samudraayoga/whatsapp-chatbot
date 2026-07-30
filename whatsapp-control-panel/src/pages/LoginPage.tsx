@@ -92,11 +92,6 @@ export const LoginPage = ({ sessionExpired = false }: LoginPageProps) => {
           </button>
         </form>
 
-        {import.meta.env.DEV && import.meta.env.VITE_ENABLE_MOCKS === 'true' && (
-          <p className="login-card__hint">
-            Mock development: <code>admin</code> / <code>admin123</code>
-          </p>
-        )}
       </section>
     </main>
   );

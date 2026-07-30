@@ -150,6 +150,7 @@ export class AdminAuthService {
 
     return {
       user: toIdentity(row),
+      sessionId,
       sessionToken,
       csrfToken,
       expiresAt
@@ -204,6 +205,26 @@ export class AdminAuthService {
     const actual = Buffer.from(hashToken(csrfToken), 'hex');
     const expected = Buffer.from(auth.csrfTokenHash, 'hex');
     return actual.length === expected.length && timingSafeEqual(actual, expected);
+  }
+
+  async verifyUserPassword(userId: string, password: string): Promise<boolean> {
+    if (!password || password.length > 256) return false;
+    const result = await this.database.query<{
+      password_hash: string;
+      is_active: boolean;
+    }>(
+      `
+        SELECT password_hash, is_active
+        FROM admin_users
+        WHERE id = $1::uuid
+        LIMIT 1;
+      `,
+      [userId]
+    );
+    const row = result.rows[0];
+    return Boolean(
+      row?.is_active && (await verifyPassword(password, row.password_hash))
+    );
   }
 
   async revokeSession(sessionId: string): Promise<void> {

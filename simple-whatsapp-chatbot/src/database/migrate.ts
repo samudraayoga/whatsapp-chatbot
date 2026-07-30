@@ -1,5 +1,10 @@
 import { pool } from './connection.js';
 import { logger } from '../utils/logger.js';
+import {
+  initialChatbotRules,
+  validateChatbotRules
+} from '../services/chatbot-rules.js';
+import { createHash } from 'node:crypto';
 
 export const runMigrations = async (): Promise<void> => {
   const client = await pool.connect();
@@ -169,6 +174,254 @@ export const runMigrations = async (): Promise<void> => {
       CREATE INDEX IF NOT EXISTS idx_handoff_tasks_state_timeline
       ON handoff_tasks(state, created_at DESC, id DESC);
     `);
+
+    await client.query(`
+      ALTER TABLE messages
+        ADD COLUMN IF NOT EXISTS logical_id UUID,
+        ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(128),
+        ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+        ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS sending_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS error_code VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS error_message TEXT,
+        ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    `);
+
+    await client.query(`
+      UPDATE messages
+      SET logical_id = gen_random_uuid()
+      WHERE logical_id IS NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE messages
+        ALTER COLUMN logical_id SET DEFAULT gen_random_uuid(),
+        ALTER COLUMN logical_id SET NOT NULL;
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_logical_id
+      ON messages(logical_id);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS outbox_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        message_id BIGINT UNIQUE NOT NULL REFERENCES messages(id),
+        state VARCHAR(30) NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        lease_owner VARCHAR(150),
+        lease_expires_at TIMESTAMPTZ,
+        last_error_code VARCHAR(100),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_outbox_eligible
+      ON outbox_messages(state, next_attempt_at, created_at);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_outbox_timeline
+      ON outbox_messages(created_at DESC, id DESC);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS message_events (
+        id BIGSERIAL PRIMARY KEY,
+        message_id BIGINT NOT NULL REFERENCES messages(id),
+        event_type VARCHAR(50) NOT NULL,
+        reason_code VARCHAR(100),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_message_events_timeline
+      ON message_events(message_id, occurred_at ASC, id ASC);
+    `);
+
+    await client.query(`
+      INSERT INTO message_events (message_id, event_type, occurred_at)
+      SELECT messages.id, 'legacy_imported', messages.created_at
+      FROM messages
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM message_events
+        WHERE message_events.message_id = messages.id
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS idempotency_keys (
+        scope VARCHAR(100) NOT NULL,
+        key_hash CHAR(64) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        resource_id BIGINT REFERENCES messages(id),
+        response_status INTEGER,
+        response_body JSONB,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (scope, key_hash)
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+      ON idempotency_keys(expires_at);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chatbot_rule_versions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        version_number INTEGER UNIQUE NOT NULL,
+        name VARCHAR(150) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        change_summary TEXT,
+        based_on_version_id UUID REFERENCES chatbot_rule_versions(id),
+        revision INTEGER NOT NULL DEFAULT 1,
+        content_hash CHAR(64),
+        created_by UUID REFERENCES admin_users(id),
+        published_by UUID REFERENCES admin_users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        published_at TIMESTAMPTZ
+      );
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_chatbot_one_published
+      ON chatbot_rule_versions ((status))
+      WHERE status = 'published';
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_chatbot_versions_timeline
+      ON chatbot_rule_versions(version_number DESC);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chatbot_rules (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        version_id UUID NOT NULL REFERENCES chatbot_rule_versions(id) ON DELETE CASCADE,
+        trigger_type VARCHAR(20) NOT NULL,
+        trigger_values JSONB NOT NULL DEFAULT '[]'::jsonb,
+        response_text TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        action VARCHAR(30) NOT NULL DEFAULT 'reply',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (version_id, priority)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS safety_control_state (
+        singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton = TRUE),
+        manual_paused BOOLEAN NOT NULL DEFAULT FALSE,
+        reason TEXT,
+        changed_by UUID REFERENCES admin_users(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      INSERT INTO safety_control_state (singleton, manual_paused)
+      VALUES (TRUE, FALSE)
+      ON CONFLICT (singleton) DO NOTHING;
+    `);
+
+    const seededVersion = await client.query<{ id: string }>(
+      `
+        INSERT INTO chatbot_rule_versions (
+          version_number,
+          name,
+          status,
+          change_summary,
+          published_at
+        )
+        VALUES (
+          1,
+          'Initial migrated rules',
+          'published',
+          'Migrated hardcoded chatbot responses; menu 3/4 aligned to their labels.',
+          NOW()
+        )
+        ON CONFLICT (version_number) DO NOTHING
+        RETURNING id::text;
+      `
+    );
+    const versionOne =
+      seededVersion.rows[0] ??
+      (
+        await client.query<{ id: string }>(
+          `
+            SELECT id::text
+            FROM chatbot_rule_versions
+            WHERE version_number = 1
+            LIMIT 1;
+          `
+        )
+      ).rows[0];
+    const ruleCount = await client.query<{ count: string }>(
+      `
+        SELECT COUNT(*)::text AS count
+        FROM chatbot_rules
+        WHERE version_id = $1::uuid;
+      `,
+      [versionOne.id]
+    );
+    if (Number(ruleCount.rows[0].count) === 0) {
+      const normalizedSeed = validateChatbotRules(initialChatbotRules);
+      for (const rule of normalizedSeed) {
+        await client.query(
+          `
+            INSERT INTO chatbot_rules (
+              version_id,
+              trigger_type,
+              trigger_values,
+              response_text,
+              priority,
+              enabled,
+              action
+            )
+            VALUES ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7);
+          `,
+          [
+            versionOne.id,
+            rule.triggerType,
+            JSON.stringify(rule.triggerValues),
+            rule.responseText,
+            rule.priority,
+            rule.enabled,
+            rule.action
+          ]
+        );
+      }
+      const contentHash = createHash('sha256')
+        .update(JSON.stringify(normalizedSeed))
+        .digest('hex');
+      await client.query(
+        `
+          UPDATE chatbot_rule_versions
+          SET content_hash = $2, updated_at = NOW()
+          WHERE id = $1::uuid;
+        `,
+        [versionOne.id, contentHash]
+      );
+    }
 
     await client.query('COMMIT');
     logger.info('Database migration completed');

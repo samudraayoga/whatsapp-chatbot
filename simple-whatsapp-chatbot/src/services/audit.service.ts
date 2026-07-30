@@ -1,5 +1,7 @@
 import { pool } from '../database/connection.js';
 import type { QueryExecutor } from './message.service.js';
+import { logger } from '../utils/logger.js';
+import { sanitizeOperationalError } from '../utils/sanitize.js';
 
 export type AuditEventInput = {
   actorUserId?: string | null;
@@ -49,3 +51,18 @@ export class AuditService {
     );
   }
 }
+
+export const recordAuditOutcome = async (
+  audit: Pick<AuditService, 'record'>,
+  input: AuditEventInput
+): Promise<void> => {
+  try {
+    await audit.record(input);
+  } catch (error) {
+    logger.error('Audit outcome persistence failed after a recorded intent', {
+      action: input.action,
+      requestId: input.requestId,
+      error: sanitizeOperationalError(error, 'Unknown audit persistence error')
+    });
+  }
+};

@@ -5,6 +5,8 @@ import {
   OperationalEventService,
   type OperationalEvent
 } from './operational-event.service.js';
+import type { OutboxService } from './outbox.service.js';
+import type { HandoffService } from './handoff.service.js';
 
 type CapabilityState =
   | 'enabled'
@@ -25,7 +27,9 @@ export class OverviewService {
     private readonly whatsappService: WhatsAppService,
     private readonly databaseHealthCheck: () => Promise<boolean> =
       checkDatabaseHealth,
-    private readonly operationalEvents?: OperationalEventService
+    private readonly operationalEvents?: OperationalEventService,
+    private readonly outbox?: Pick<OutboxService, 'getSummary'>,
+    private readonly handoffs?: Pick<HandoffService, 'getSummary'>
   ) {}
 
   async getOverview() {
@@ -35,17 +39,32 @@ export class OverviewService {
     const manualPaused = this.whatsappService.isSendingPaused();
     const blockers: string[] = [];
     let recentEvents: OperationalEvent[] = [];
+    let outboxSummary = null;
+    let followUpSummary = null;
 
     if (!databaseConnected) blockers.push('database_unavailable');
     if (session.state !== 'connected') {
       blockers.push(`whatsapp_${session.state}`);
     }
-    if (manualPaused) blockers.push('manual_pause');
+    const sendingBlocks =
+      this.whatsappService.getSendingBlocks?.() ??
+      (manualPaused
+        ? [{ code: 'MANUAL_PAUSE' as const, retryAfterMs: 30_000 }]
+        : []);
+    for (const block of sendingBlocks) {
+      blockers.push(block.code.toLowerCase());
+    }
 
     if (databaseConnected && this.operationalEvents) {
       recentEvents = await this.operationalEvents
         .listRecent(8)
         .catch(() => []);
+    }
+    if (databaseConnected && this.outbox) {
+      outboxSummary = await this.outbox.getSummary().catch(() => null);
+    }
+    if (databaseConnected && this.handoffs) {
+      followUpSummary = await this.handoffs.getSummary().catch(() => null);
     }
 
     let safety;
@@ -60,14 +79,18 @@ export class OverviewService {
         config.autoPauseAt
       );
       const recoveryPaused = stats.banRecovery?.phase === 'paused';
-
-      if (healthAutoPaused) blockers.push('health_auto_pause');
-      if (recoveryPaused) blockers.push('recovery_paused');
+      const recoveryDead = stats.banRecovery?.phase === 'dead';
+      const warmupLimited = stats.warmUp.todaySent >= stats.warmUp.todayLimit;
 
       safety = {
         risk: stats.health.risk,
         score: stats.health.score,
-        paused: manualPaused || healthAutoPaused || recoveryPaused,
+        paused:
+          manualPaused ||
+          healthAutoPaused ||
+          recoveryPaused ||
+          recoveryDead ||
+          warmupLimited,
         reasons: stats.health.reasons,
         recommendation: stats.health.recommendation
       };
@@ -118,19 +141,28 @@ export class OverviewService {
         readyToSend: blockers.length === 0,
         blockers,
         database: databaseConnected ? ('connected' as const) : ('disconnected' as const),
-        eventStream: 'connected' as const
+        eventStream:
+          databaseConnected && this.operationalEvents
+            ? ('connected' as const)
+            : ('disconnected' as const)
       },
       session,
       safety,
       rates,
       warmup,
-      outbox: null,
-      followUp: null,
+      outbox: outboxSummary,
+      followUp: followUpSummary,
       capabilities: {
         safety: safetyCapability,
-        outbox: 'disabled' as CapabilityState,
-        followUp: 'disabled' as CapabilityState,
-        eventStream: 'enabled' as CapabilityState
+        outbox: (
+          outboxSummary ? 'enabled' : databaseConnected ? 'unavailable' : 'unavailable'
+        ) as CapabilityState,
+        followUp: (
+          followUpSummary ? 'enabled' : 'unavailable'
+        ) as CapabilityState,
+        eventStream: (
+          databaseConnected && this.operationalEvents ? 'enabled' : 'unavailable'
+        ) as CapabilityState
       },
       recentEvents
     };

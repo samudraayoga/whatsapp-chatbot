@@ -35,13 +35,40 @@ const riskTone: Record<AppShellProps['risk'], StatusTone> = {
   critical: 'danger'
 };
 
-const navigation = [
+type NavigationItem = {
+  label: string;
+  path?: string;
+  activePrefix?: string;
+  enabled: boolean;
+  permission?: AdminUser['permissions'][number];
+};
+
+const navigation: NavigationItem[] = [
   { label: 'Overview', path: '/overview', enabled: true },
   { label: 'Inbox', path: '/inbox', enabled: true },
   { label: 'Contacts', path: '/contacts', enabled: true },
-  { label: 'Messages', enabled: false },
-  { label: 'Operations', path: '/operations/session', enabled: true },
-  { label: 'Chatbot', enabled: false },
+  {
+    label: 'Messages',
+    path: '/messages/outbox',
+    activePrefix: '/messages',
+    enabled: true
+  },
+  {
+    label: 'Session',
+    path: '/operations/session',
+    enabled: true
+  },
+  {
+    label: 'Safety',
+    path: '/operations/safety',
+    enabled: true
+  },
+  {
+    label: 'Chatbot',
+    path: '/chatbot/rules',
+    enabled: true,
+    permission: 'chatbot.manage'
+  },
   { label: 'Settings', enabled: false }
 ];
 
@@ -77,7 +104,9 @@ export const AppShell = ({
           </span>
         </a>
         <div className="topbar__status" aria-label="Status operasional">
-          <StatusBadge tone="info">Development</StatusBadge>
+          <StatusBadge tone="info">
+            {import.meta.env.PROD ? 'Production' : 'Development'}
+          </StatusBadge>
           <StatusBadge tone={sessionTone[sessionState]}>
             Session: {sessionState.replaceAll('_', ' ')}
           </StatusBadge>
@@ -114,29 +143,41 @@ export const AppShell = ({
       <aside className="sidebar" aria-label="Navigasi utama">
         <nav>
           <ul>
-            {navigation.map((item) => (
+            {navigation.map((item) => {
+              const isEnabled =
+                item.enabled &&
+                (!('permission' in item) ||
+                  !item.permission ||
+                  user.permissions.includes(item.permission));
+              return (
               <li key={item.label}>
                 <button
                   className="nav-item"
                   data-active={
                     item.path === currentPath ||
+                    Boolean(
+                      'activePrefix' in item &&
+                        item.activePrefix &&
+                        currentPath.startsWith(item.activePrefix)
+                    ) ||
                     (item.path !== '/overview' &&
                       Boolean(item.path && currentPath.startsWith(`${item.path}/`)))
                   }
-                  disabled={!item.enabled}
+                  disabled={!isEnabled}
                   onClick={() => item.path && navigate(item.path)}
                   type="button"
                 >
                   {item.label}
-                  {!item.enabled && <span>soon</span>}
+                  {!isEnabled && <span>restricted</span>}
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </nav>
         <div className="sidebar__footer">
           <span className="pulse" aria-hidden="true" />
-          Authenticated · Sprint 3
+          Authenticated
         </div>
       </aside>
 

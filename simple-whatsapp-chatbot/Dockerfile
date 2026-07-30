@@ -20,6 +20,7 @@ COPY baileys-antiban/dist /baileys-antiban/dist
 COPY simple-whatsapp-chatbot/package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
-RUN mkdir -p auth
+RUN mkdir -p auth && chown node:node auth
+USER node
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+CMD ["node", "dist/server.js"]

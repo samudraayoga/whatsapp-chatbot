@@ -1,6 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
 import { AppError } from '../middleware/error.middleware.js';
-import { AuditService } from '../services/audit.service.js';
+import {
+  AuditService,
+  recordAuditOutcome
+} from '../services/audit.service.js';
 import {
   HandoffService,
   type HandoffState
@@ -103,6 +106,17 @@ export class AdminHandoffController {
       if (!before) {
         throw new AppError('Handoff was not found', 404, 'HANDOFF_NOT_FOUND');
       }
+      await this.audit.record({
+        actorUserId: request.adminAuth!.id,
+        action: 'handoff.assign_requested',
+        resourceType: 'handoff_task',
+        resourceId: id,
+        beforeState: before,
+        afterState: { assigneeUserId: requestedAssignee },
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
       const updated = await this.handoffs.assign(id, requestedAssignee);
       if (!updated) {
         throw new AppError(
@@ -111,7 +125,7 @@ export class AdminHandoffController {
           'HANDOFF_STATE_CONFLICT'
         );
       }
-      await this.audit.record({
+      await recordAuditOutcome(this.audit, {
         actorUserId: request.adminAuth!.id,
         action: 'handoff.assign',
         resourceType: 'handoff_task',
@@ -156,6 +170,17 @@ export class AdminHandoffController {
       if (!before) {
         throw new AppError('Handoff was not found', 404, 'HANDOFF_NOT_FOUND');
       }
+      await this.audit.record({
+        actorUserId: request.adminAuth!.id,
+        action: 'handoff.resolve_requested',
+        resourceType: 'handoff_task',
+        resourceId: id,
+        reason: resolutionNote,
+        beforeState: before,
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
       const updated = await this.handoffs.resolve(id, resolutionNote);
       if (!updated) {
         throw new AppError(
@@ -164,7 +189,7 @@ export class AdminHandoffController {
           'HANDOFF_STATE_CONFLICT'
         );
       }
-      await this.audit.record({
+      await recordAuditOutcome(this.audit, {
         actorUserId: request.adminAuth!.id,
         action: 'handoff.resolve',
         resourceType: 'handoff_task',

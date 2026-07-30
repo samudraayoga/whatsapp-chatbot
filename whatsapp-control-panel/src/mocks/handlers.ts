@@ -6,6 +6,16 @@ import {
   mockHandoffs,
   mockMessages
 } from './inbox-fixtures';
+import {
+  mockMessageDetails,
+  mockOutboxItems
+} from './outbox-fixtures';
+import { mockSafetyCenter } from './safety-fixtures';
+
+const composeReplay = new Map<
+  string,
+  { payload: string; data: { id: string; outboxId: string; state: 'accepted' } }
+>();
 
 const meta = (nextCursor: string | null = null) => ({
   requestId: 'req_mock_sprint_3',
@@ -75,6 +85,23 @@ export const handlers = [
     await delay(120);
     return HttpResponse.json(getOverviewScenario());
   }),
+  http.get('*/api/admin/v1/safety/stats', () =>
+    HttpResponse.json(structuredClone(mockSafetyCenter))
+  ),
+  http.post('*/api/admin/v1/safety/pause', () => {
+    const result = structuredClone(mockSafetyCenter);
+    result.data.manualPaused = true;
+    result.data.mode = 'manual_pause';
+    return HttpResponse.json(result);
+  }),
+  http.post('*/api/admin/v1/safety/resume', () => {
+    const result = structuredClone(mockSafetyCenter);
+    result.data.manualPaused = false;
+    return HttpResponse.json(result);
+  }),
+  http.post('*/api/admin/v1/safety/reset', () =>
+    HttpResponse.json(structuredClone(mockSafetyCenter))
+  ),
   http.get('*/api/admin/v1/conversations', ({ request }) => {
     const url = new URL(request.url);
     const query = (url.searchParams.get('query') ?? '').toLowerCase();
@@ -167,6 +194,91 @@ export const handlers = [
       meta: meta()
     });
   }),
+  http.post('*/api/admin/v1/messages', async ({ request }) => {
+    const key = request.headers.get('Idempotency-Key') ?? '';
+    const body = await request.json();
+    const payload = JSON.stringify(body);
+    const existing = composeReplay.get(key);
+    if (existing && existing.payload !== payload) {
+      return HttpResponse.json(
+        {
+          error: {
+            code: 'IDEMPOTENCY_CONFLICT',
+            message: 'Idempotency key conflict',
+            requestId: 'req_mock_conflict'
+          }
+        },
+        { status: 409 }
+      );
+    }
+    if (existing) {
+      return HttpResponse.json({ data: existing.data, meta: meta() }, { status: 202 });
+    }
+    const data = {
+      id: '59942ce7-4f15-4a8b-9448-a98f39d70d10',
+      outboxId: '2ddb725d-56c0-4708-8d81-1b868a3e8bd9',
+      state: 'accepted' as const
+    };
+    composeReplay.set(key, { payload, data });
+    return HttpResponse.json({ data, meta: meta() }, { status: 202 });
+  }),
+  http.get('*/api/admin/v1/outbox', ({ request }) => {
+    const state = new URL(request.url).searchParams.get('state') ?? 'all';
+    return HttpResponse.json({
+      data:
+        state === 'all'
+          ? mockOutboxItems
+          : mockOutboxItems.filter((item) => item.state === state),
+      meta: meta()
+    });
+  }),
+  http.get('*/api/admin/v1/messages/:messageId', ({ params }) => {
+    const detail = mockMessageDetails[String(params.messageId)];
+    return detail
+      ? HttpResponse.json({ data: detail, meta: meta() })
+      : HttpResponse.json(
+          {
+            error: {
+              code: 'MESSAGE_NOT_FOUND',
+              message: 'Message was not found',
+              requestId: 'req_mock_not_found'
+            }
+          },
+          { status: 404 }
+        );
+  }),
+  http.post('*/api/admin/v1/outbox/:outboxId/cancel', ({ params }) => {
+    const item = mockOutboxItems.find(
+      (candidate) => candidate.id === String(params.outboxId)
+    )!;
+    return HttpResponse.json({
+      data: { id: item.id, messageId: item.messageId, state: 'canceled' },
+      meta: meta()
+    });
+  }),
+  http.post('*/api/admin/v1/outbox/:outboxId/retry', ({ params }) => {
+    const item = mockOutboxItems.find(
+      (candidate) => candidate.id === String(params.outboxId)
+    )!;
+    return HttpResponse.json({
+      data: { id: item.id, messageId: item.messageId, state: 'queued' },
+      meta: meta()
+    });
+  }),
+  http.post('*/api/admin/v1/outbox/:outboxId/reconcile', async ({ params, request }) => {
+    const body = (await request.json()) as { resolution?: string };
+    const item = mockOutboxItems.find(
+      (candidate) => candidate.id === String(params.outboxId)
+    )!;
+    return HttpResponse.json({
+      data: {
+        id: item.id,
+        messageId: item.messageId,
+        state: body.resolution === 'confirmed_sent' ? 'completed' : 'failed'
+      },
+      meta: meta()
+    });
+  }),
   http.get('*/api/admin/v1/session', () => HttpResponse.json(sessionPayload())),
   http.get('*/api/admin/v1/session/qr', () =>
     HttpResponse.json({
@@ -179,17 +291,5 @@ export const handlers = [
   ),
   http.post('*/api/admin/v1/session/reconnect', () =>
     HttpResponse.json(sessionPayload(), { status: 202 })
-  ),
-  http.post('*/api/admin/v1/safety/pause', () => {
-    const overview = getOverviewScenario();
-    return HttpResponse.json({
-      data: {
-        effectivePaused: true,
-        manualPaused: true,
-        snapshot: { ...overview.data.safety, paused: true },
-        capabilities: overview.data.capabilities
-      },
-      meta: overview.meta
-    });
-  })
+  )
 ];

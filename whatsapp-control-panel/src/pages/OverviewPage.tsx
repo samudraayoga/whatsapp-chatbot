@@ -1,12 +1,7 @@
-import { lazy, Suspense } from 'react';
 import { useOverviewQuery } from '../api/queries';
 import { MetricCard } from '../components/MetricCard';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import type { AdminUser } from '../api/contracts';
-
-const DevScenarioControl = import.meta.env.DEV
-  ? lazy(() => import('../dev/ScenarioControl'))
-  : null;
 
 const stateTone = (state: string): StatusTone => {
   if (state === 'connected' || state === 'low') return 'success';
@@ -82,11 +77,6 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
           <p>Ini kondisi sistem WhatsApp Anda saat ini.</p>
         </div>
         <div className="page-heading__actions">
-          {DevScenarioControl && (
-            <Suspense fallback={null}>
-              <DevScenarioControl />
-            </Suspense>
-          )}
           <button className="button button--primary" disabled type="button">
             Compose message
           </button>

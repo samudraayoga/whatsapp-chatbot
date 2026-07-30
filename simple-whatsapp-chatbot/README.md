@@ -14,6 +14,10 @@ Backend chatbot WhatsApp sederhana untuk MVP local development dengan Node.js 22
 - Menyediakan liveness, readiness, dan operational overview untuk control panel.
 - Menyediakan pencarian contact, histori pesan cursor-paginated, identity warning,
   dan human follow-up queue untuk pilihan menu `5`.
+- Menyediakan safe compose dengan idempotency key, PostgreSQL durable outbox,
+  worker lease/backoff, guarded cancel/retry, dan immutable message timeline.
+- Menyediakan chatbot rules berversi dengan draft validation, dry-run,
+  guarded publish/rollback, audit, dan active runtime cache.
 
 ## Struktur Project
 
@@ -82,6 +86,7 @@ ADMIN_BOOTSTRAP_USERNAME=admin
 ADMIN_BOOTSTRAP_PASSWORD=admin123
 ADMIN_BOOTSTRAP_DISPLAY_NAME=Local Admin
 ADMIN_SESSION_TTL_HOURS=8
+SAFETY_RESET_ENABLED=false
 ```
 
 Ganti bootstrap password untuk environment selain local. Pada `NODE_ENV=production`,
@@ -233,7 +238,7 @@ docker compose up --build
 
 ## Endpoint
 
-### Admin API Sprint 1–3
+### Admin API Sprint 1–6
 
 - `POST /api/admin/v1/auth/login`
 - `GET /api/admin/v1/me`
@@ -243,7 +248,10 @@ docker compose up --build
 - `GET /api/admin/v1/session/qr`
 - `POST /api/admin/v1/session/reconnect`
 - `GET /api/admin/v1/safety/stats`
+- `GET /api/admin/v1/safety/metrics`
 - `POST /api/admin/v1/safety/pause`
+- `POST /api/admin/v1/safety/resume`
+- `POST /api/admin/v1/safety/reset`
 - `GET /api/admin/v1/events/stream`
 - `GET /api/admin/v1/conversations`
 - `GET /api/admin/v1/conversations/:conversationId/messages`
@@ -252,10 +260,29 @@ docker compose up --build
 - `GET /api/admin/v1/handoffs`
 - `POST /api/admin/v1/handoffs/:handoffId/assign`
 - `POST /api/admin/v1/handoffs/:handoffId/resolve`
+- `POST /api/admin/v1/messages`
+- `GET /api/admin/v1/messages/:messageId`
+- `GET /api/admin/v1/outbox`
+- `POST /api/admin/v1/outbox/:outboxId/cancel`
+- `POST /api/admin/v1/outbox/:outboxId/retry`
+- `POST /api/admin/v1/outbox/:outboxId/reconcile`
+- `GET /api/admin/v1/chatbot/versions`
+- `POST /api/admin/v1/chatbot/versions/drafts`
+- `GET /api/admin/v1/chatbot/versions/:versionId`
+- `PUT /api/admin/v1/chatbot/versions/:versionId/rules`
+- `POST /api/admin/v1/chatbot/test`
+- `POST /api/admin/v1/chatbot/versions/:versionId/publish`
+- `POST /api/admin/v1/chatbot/versions/:versionId/rollback`
 
 Browser memakai opaque `admin_session` cookie. Cookie session bersifat `HttpOnly`;
 mutation juga wajib mengirim cookie `admin_csrf` melalui header `X-CSRF-Token`.
 Kontrak lengkap ada di `docs/control-panel/openapi.yaml`.
+
+Safety reset sengaja nonaktif secara default. Untuk mengaktifkannya pada
+environment terkontrol, set `SAFETY_RESET_ENABLED=true`. Endpoint tetap
+memerlukan Admin, password saat ini, alasan, typed confirmation, health low,
+serta recovery/timelock yang sudah clear. Setelah reset, sending tetap paused
+hingga resume terpisah berhasil.
 
 ### `GET /health`
 
@@ -346,6 +373,5 @@ Baileys bukan WhatsApp Business Cloud API resmi. Penggunaannya harus memperhatik
 
 ## Pengembangan Tahap Berikutnya
 
-- Menambahkan durable outbox dan command kirim pesan asynchronous.
 - Menambahkan validasi schema dengan library seperti Zod.
 - Menambahkan guarded reset/re-pair untuk Admin dengan step-up authentication.

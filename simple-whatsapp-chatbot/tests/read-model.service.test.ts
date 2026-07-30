@@ -80,6 +80,31 @@ describe('ReadModelService', () => {
     expect(result.data[0].identityStatus).toBe('unresolved');
   });
 
+  it('uses the internal numeric row id for message cursors while exposing UUID ids', async () => {
+    const rows = [31, 30, 29].map((cursorId, index) => ({
+      id: `10000000-0000-4000-8000-0000000000${index}`,
+      cursor_id: String(cursorId),
+      whatsapp_message_id: `provider-${cursorId}`,
+      direction: 'incoming' as const,
+      message_type: 'text',
+      content: `Message ${cursorId}`,
+      status: 'received',
+      created_at: new Date(`2026-07-30T03:0${3 - index}:00.000Z`)
+    }));
+    const database = {
+      query: vi.fn(async () => queryResult(rows))
+    } as unknown as QueryExecutor;
+    const service = new ReadModelService(database);
+
+    const result = await service.listMessages({ contactId: '7', limit: 2 });
+
+    expect(result.data[1].id).toBe(rows[1].id);
+    expect(decodeCursor(result.nextCursor!)).toEqual({
+      occurredAt: rows[1].created_at.toISOString(),
+      id: rows[1].cursor_id
+    });
+  });
+
   it('escapes all characters with SQL LIKE meaning', () => {
     expect(escapeLikePattern('100%_\\safe')).toBe('100\\%\\_\\\\safe');
   });

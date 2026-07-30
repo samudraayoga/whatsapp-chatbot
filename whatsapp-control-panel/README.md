@@ -9,20 +9,10 @@ npm install
 npm run dev
 ```
 
-Development memakai mock Admin API secara default. Login mock:
-
-```text
-username: admin
-password: admin123
-```
-
-Untuk memakai backend lokal, buat `.env.local`:
-
-```dotenv
-VITE_ENABLE_MOCKS=false
-```
-
-Vite akan mem-proxy `/api` ke `http://localhost:3000`.
+Development selalu memakai Admin API asli. Vite mem-proxy `/api` ke
+`http://localhost:3000`, jadi backend harus sudah berjalan sebelum login.
+Mock/fixture hanya dimuat oleh Vitest melalui MSW dan tidak tersedia sebagai
+mode runtime aplikasi.
 
 ## Validasi
 
@@ -52,3 +42,39 @@ Sprint 3 menyediakan:
 
 Nomor dan JID yang ditampilkan sudah termasking oleh backend. Isi pesan tidak
 pernah ditaruh pada URL atau query string.
+
+Sprint 4 menyediakan:
+
+- Safe composer di thread dan `/messages/compose`.
+- Preflight session, safety risk, rate budget, dan character limit 4.096.
+- Durable outbox pada `/messages/outbox`.
+- Message timeline pada `/messages/:messageId`.
+- Cancel untuk item yang belum sending dan controlled retry untuk known failure.
+- `unknown_outcome` recovery UX tanpa blind retry.
+- Admin reconciliation untuk confirmed sent/not-sent dengan catatan audit.
+
+Response `202 Accepted` hanya berarti command sudah durable di PostgreSQL,
+bukan berarti WhatsApp sudah menerima pesan.
+
+Sprint 5 menyediakan:
+
+- Version history dan rule editor di `/chatbot/rules`, khusus permission
+  `chatbot.manage`.
+- Draft copy dari active version; version published/archived tidak dapat diedit.
+- Validasi trigger, unique priority, empty rule, fallback, response, dan action.
+- Dry-run exact-normalized tanpa mengirim pesan WhatsApp.
+- Guarded publish dan rollback dengan summary/reason serta phrase confirmation.
+- Contract test memakai fixture terisolasi; workflow runtime selalu memakai backend.
+
+Sprint 6 menyediakan:
+
+- Safety Center pada `/operations/safety`.
+- Blocker/delay reason dan rekomendasi yang dapat ditelusuri ke message timeline.
+- Health, rate, warm-up, timelock, recovery, delivery, retry/reconnect, dan
+  capability state yang eksplisit.
+- Emergency pause untuk Operator.
+- Guarded resume untuk Admin dengan alasan, password saat ini, dan acknowledgement.
+- Reset default-off dengan feature flag, eligibility, password, alasan, dan typed
+  confirmation.
+- Preset `conservative` read-only; UI tidak membaca atau mengubah file JSON
+  internal `baileys-antiban`.

@@ -1,13 +1,11 @@
 openapi: 3.1.0
 info:
   title: WhatsApp Chatbot Admin API
-  version: 0.4.0
-  summary: Sprint 3 contract for the WhatsApp control panel
+  version: 0.7.0
+  summary: Sprint 6 contract for the WhatsApp control panel
   description: |
-    Sprint 3 adds searchable contacts, cursor-paginated conversation history,
-    an identity facade, and audited human follow-up tasks to the Sprint 2
-    session and operational controls.
-    Later-sprint paths remain contract drafts.
+    Sprint 6 adds normalized safety telemetry, durable pause state, traceable
+    safety delays, guarded resume/reset, and Prometheus safety metrics.
     Browser clients authenticate using a secure server-managed session cookie.
 servers:
   - url: http://localhost:3000
@@ -22,6 +20,7 @@ tags:
   - name: Session
   - name: Safety
   - name: Events
+  - name: Chatbot
 security:
   - sessionCookie: []
 
@@ -302,6 +301,141 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/admin/v1/outbox:
+    get:
+      tags: [Messages]
+      operationId: listOutbox
+      summary: List durable outbox items
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: state
+          in: query
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/OutboxState"
+              - const: all
+      responses:
+        "200":
+          description: Outbox page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/outbox/{outboxId}/cancel:
+    post:
+      tags: [Messages]
+      operationId: cancelOutboxItem
+      summary: Cancel an item before provider processing begins
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/OutboxId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Item canceled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxTransitionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/outbox/{outboxId}/retry:
+    post:
+      tags: [Messages]
+      operationId: retryOutboxItem
+      summary: Requeue a known failed item while preserving logical lineage
+      description: unknown_outcome cannot be retried without reconciliation.
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/OutboxId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Item requeued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxTransitionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/outbox/{outboxId}/reconcile:
+    post:
+      tags: [Messages]
+      operationId: reconcileOutboxItem
+      summary: Reconcile an ambiguous provider outcome
+      description: Admin-only operation backed by external provider/device evidence.
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/OutboxId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [resolution, note]
+              properties:
+                resolution:
+                  type: string
+                  enum: [confirmed_sent, confirmed_not_sent]
+                providerMessageId:
+                  type: string
+                  maxLength: 255
+                note:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        "200":
+          description: Ambiguous outcome reconciled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
   /api/admin/v1/handoffs:
     get:
       tags: [Handoffs]
@@ -464,7 +598,7 @@ paths:
       tags: [Safety]
       operationId: getSafetyStats
       summary: Return normalized anti-ban stats and capability states
-      x-sprint: 2
+      x-sprint: 6
       responses:
         "200":
           description: Safety snapshot
@@ -517,7 +651,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ReasonRequest"
+              $ref: "#/components/schemas/SafetyResumeRequest"
       responses:
         "200":
           description: Effective safety state after the command
@@ -535,6 +669,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/safety/reset:
+    post:
+      tags: [Safety]
+      operationId: resetSafetyState
+      summary: Reset eligible safety state while keeping sending manually paused
+      description: Disabled unless SAFETY_RESET_ENABLED=true and no recovery/timelock guard is active.
+      x-sprint: 6
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SafetyResetRequest"
+      responses:
+        "200":
+          description: Reset completed; sending remains manually paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Safety reset is disabled by configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "423":
+          description: Recovery or timelock guard prevents reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/safety/metrics:
+    get:
+      tags: [Safety]
+      operationId: getSafetyMetrics
+      summary: Export normalized control-panel safety metrics
+      x-sprint: 6
+      responses:
+        "200":
+          description: Prometheus text exposition; unavailable module values are omitted
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/admin/v1/events/stream:
     get:
@@ -556,6 +747,198 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/admin/v1/chatbot/versions:
+    get:
+      tags: [Chatbot]
+      operationId: listChatbotVersions
+      summary: List draft, active, and archived chatbot versions
+      x-sprint: 5
+      responses:
+        "200":
+          description: Version history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionListResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/chatbot/versions/drafts:
+    post:
+      tags: [Chatbot]
+      operationId: createChatbotDraft
+      summary: Copy the active immutable version into a new draft
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 3
+                  maxLength: 150
+      responses:
+        "201":
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/chatbot/versions/{versionId}:
+    get:
+      tags: [Chatbot]
+      operationId: getChatbotVersion
+      summary: Read one immutable or draft version with its rules
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/ChatbotVersionId"
+      responses:
+        "200":
+          description: Version detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/chatbot/versions/{versionId}/rules:
+    put:
+      tags: [Chatbot]
+      operationId: replaceChatbotDraftRules
+      summary: Atomically validate and replace every rule in a draft
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/ChatbotVersionId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, rules]
+              properties:
+                expectedRevision:
+                  type: integer
+                  minimum: 0
+                rules:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    $ref: "#/components/schemas/ChatbotRule"
+      responses:
+        "200":
+          description: Updated draft and incremented revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/chatbot/test:
+    post:
+      tags: [Chatbot]
+      operationId: testChatbotVersion
+      summary: Evaluate normalized input without sending a WhatsApp message
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [input]
+              properties:
+                versionId:
+                  type: string
+                  format: uuid
+                input:
+                  type: string
+                  maxLength: 4096
+      responses:
+        "200":
+          description: Exact normalized match and response preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotTestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/admin/v1/chatbot/versions/{versionId}/publish:
+    post:
+      tags: [Chatbot]
+      operationId: publishChatbotVersion
+      summary: Atomically replace the active version after explicit confirmation
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/ChatbotVersionId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatbotPublishRequest"
+      responses:
+        "200":
+          description: Newly active version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/chatbot/versions/{versionId}/rollback:
+    post:
+      tags: [Chatbot]
+      operationId: rollbackChatbotVersion
+      summary: Restore an exact previously published rule set
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/ChatbotVersionId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatbotRollbackRequest"
+      responses:
+        "200":
+          description: Restored active version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/StateConflict"
 
 components:
   securitySchemes:
@@ -622,6 +1005,20 @@ components:
       schema:
         type: string
         format: uuid
+    OutboxId:
+      name: outboxId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChatbotVersionId:
+      name: versionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
 
   responses:
     BadRequest:
@@ -656,6 +1053,203 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    ChatbotRule:
+      type: object
+      additionalProperties: false
+      required:
+        [triggerType, triggerValues, responseText, priority, enabled, action]
+      properties:
+        id:
+          type: string
+          format: uuid
+        triggerType:
+          type: string
+          enum: [exact, alias, empty, fallback]
+        triggerValues:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 100
+        responseText:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        enabled:
+          type: boolean
+        action:
+          type: string
+          enum: [reply, create_handoff]
+
+    ChatbotVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - versionNumber
+        - name
+        - status
+        - changeSummary
+        - basedOnVersionId
+        - revision
+        - contentHash
+        - createdBy
+        - publishedBy
+        - createdAt
+        - updatedAt
+        - publishedAt
+        - ruleCount
+      properties:
+        id:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        status:
+          type: string
+          enum: [draft, published, archived]
+        changeSummary:
+          type: [string, "null"]
+        basedOnVersionId:
+          type: [string, "null"]
+          format: uuid
+        revision:
+          type: integer
+          minimum: 0
+        contentHash:
+          type: [string, "null"]
+        createdBy:
+          type: [string, "null"]
+          format: uuid
+        publishedBy:
+          type: [string, "null"]
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+        ruleCount:
+          type: integer
+          minimum: 0
+
+    ChatbotVersionListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatbotVersion"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ChatbotVersionDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [version, rules]
+          properties:
+            version:
+              $ref: "#/components/schemas/ChatbotVersion"
+            rules:
+              type: array
+              items:
+                $ref: "#/components/schemas/ChatbotRule"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ChatbotTestResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            [versionId, versionNumber, normalizedInput, matchedRule, response]
+          properties:
+            versionId:
+              type: string
+              format: uuid
+            versionNumber:
+              type: integer
+              minimum: 1
+            normalizedInput:
+              type: string
+            matchedRule:
+              type: object
+              additionalProperties: false
+              required:
+                [id, triggerType, priority, matchedTrigger, action]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                triggerType:
+                  type: string
+                  enum: [exact, alias, empty, fallback]
+                priority:
+                  type: integer
+                matchedTrigger:
+                  type: [string, "null"]
+                action:
+                  type: string
+                  enum: [reply, create_handoff]
+            response:
+              type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ChatbotPublishRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedActiveVersionId, changeSummary, confirmation]
+      properties:
+        expectedActiveVersionId:
+          type: string
+          format: uuid
+        changeSummary:
+          type: string
+          minLength: 5
+          maxLength: 500
+        confirmation:
+          type: string
+          const: PUBLISH
+
+    ChatbotRollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedActiveVersionId, reason, confirmation]
+      properties:
+        expectedActiveVersionId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        confirmation:
+          type: string
+          const: ROLLBACK
+
     LoginRequest:
       type: object
       additionalProperties: false
@@ -877,7 +1471,7 @@ components:
                   type: string
                 classification:
                   type: string
-                  enum: [recoverable, logged_out, bad_session, unknown]
+                  enum: [recoverable, logged_out, bad_session, fatal, unknown]
                 occurredAt:
                   type: string
                   format: date-time
@@ -1046,9 +1640,12 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [id, state]
+          required: [id, outboxId, state]
           properties:
             id:
+              type: string
+              format: uuid
+            outboxId:
               type: string
               format: uuid
             state:
@@ -1095,7 +1692,7 @@ components:
     MessageEvent:
       type: object
       additionalProperties: false
-      required: [id, eventType, occurredAt]
+      required: [id, eventType, reasonCode, metadata, occurredAt]
       properties:
         id:
           type: string
@@ -1103,6 +1700,9 @@ components:
           type: string
         reasonCode:
           type: [string, "null"]
+        metadata:
+          type: object
+          additionalProperties: true
         occurredAt:
           type: string
           format: date-time
@@ -1115,14 +1715,250 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [message, events]
+          required: [message, outbox, events]
           properties:
             message:
-              $ref: "#/components/schemas/Message"
+              $ref: "#/components/schemas/LogicalMessage"
+            outbox:
+              oneOf:
+                - $ref: "#/components/schemas/OutboxDetail"
+                - type: "null"
             events:
               type: array
               items:
                 $ref: "#/components/schemas/MessageEvent"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    LogicalMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - direction
+        - messageType
+        - content
+        - state
+        - priority
+        - providerMessageId
+        - recipient
+        - scheduledAt
+        - queuedAt
+        - sendingAt
+        - sentAt
+        - deliveredAt
+        - readAt
+        - failedAt
+        - errorCode
+        - errorMessage
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        direction:
+          const: outgoing
+        messageType:
+          const: text
+        content:
+          type: string
+        state:
+          type: string
+        priority:
+          type: string
+          enum: [high, normal, low]
+        providerMessageId:
+          type: [string, "null"]
+        recipient:
+          type: object
+          additionalProperties: false
+          required: [contactId, displayName, maskedPhone]
+          properties:
+            contactId:
+              type: string
+            displayName:
+              type: [string, "null"]
+            maskedPhone:
+              type: [string, "null"]
+        scheduledAt:
+          type: [string, "null"]
+          format: date-time
+        queuedAt:
+          type: [string, "null"]
+          format: date-time
+        sendingAt:
+          type: [string, "null"]
+          format: date-time
+        sentAt:
+          type: [string, "null"]
+          format: date-time
+        deliveredAt:
+          type: [string, "null"]
+          format: date-time
+        readAt:
+          type: [string, "null"]
+          format: date-time
+        failedAt:
+          type: [string, "null"]
+          format: date-time
+        errorCode:
+          type: [string, "null"]
+        errorMessage:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OutboxState:
+      type: string
+      enum:
+        - queued
+        - scheduled
+        - leased
+        - retrying
+        - safety_delayed
+        - failed
+        - completed
+        - canceled
+        - unknown_outcome
+
+    OutboxDetail:
+      type: object
+      additionalProperties: false
+      required: [id, state, attempts, maxAttempts, nextAttemptAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/OutboxState"
+        attempts:
+          type: integer
+          minimum: 0
+        maxAttempts:
+          type: integer
+          minimum: 1
+        nextAttemptAt:
+          type: [string, "null"]
+          format: date-time
+
+    OutboxItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - messageId
+        - state
+        - messageState
+        - priority
+        - attempts
+        - maxAttempts
+        - nextAttemptAt
+        - lastErrorCode
+        - createdAt
+        - updatedAt
+        - contact
+        - preview
+      properties:
+        id:
+          type: string
+          format: uuid
+        messageId:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/OutboxState"
+        messageState:
+          type: string
+        priority:
+          type: string
+          enum: [high, normal, low]
+        attempts:
+          type: integer
+          minimum: 0
+        maxAttempts:
+          type: integer
+          minimum: 1
+        nextAttemptAt:
+          type: string
+          format: date-time
+        lastErrorCode:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        contact:
+          type: object
+          additionalProperties: false
+          required: [displayName, maskedPhone]
+          properties:
+            displayName:
+              type: [string, "null"]
+            maskedPhone:
+              type: [string, "null"]
+        preview:
+          type: string
+
+    OutboxListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxItem"
+        meta:
+          $ref: "#/components/schemas/CursorMeta"
+
+    OutboxTransitionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, messageId, state]
+          properties:
+            id:
+              type: string
+              format: uuid
+            messageId:
+              type: string
+              format: uuid
+            state:
+              type: string
+              enum: [canceled, queued]
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ReconciliationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, messageId, state]
+          properties:
+            id:
+              type: string
+              format: uuid
+            messageId:
+              type: string
+              format: uuid
+            state:
+              type: string
+              enum: [completed, failed]
         meta:
           $ref: "#/components/schemas/Meta"
 
@@ -1397,22 +2233,298 @@ components:
       required: [data, meta]
       properties:
         data:
-          type: object
-          additionalProperties: false
-          required: [effectivePaused, manualPaused, snapshot, capabilities]
-          properties:
-            effectivePaused:
-              type: boolean
-            manualPaused:
-              type: boolean
-            snapshot:
-              $ref: "#/components/schemas/SafetySnapshot"
-            capabilities:
-              type: object
-              additionalProperties:
-                $ref: "#/components/schemas/CapabilityState"
+          $ref: "#/components/schemas/SafetyCenterData"
         meta:
           $ref: "#/components/schemas/Meta"
+
+    SafetyCenterData:
+      type: object
+      additionalProperties: true
+      required:
+        - effectivePaused
+        - manualPaused
+        - mode
+        - blockers
+        - health
+        - rates
+        - warmup
+        - timelock
+        - recovery
+        - delivery
+        - retry
+        - reconnect
+        - sessionStability
+        - recentDelays
+        - config
+        - capabilities
+      properties:
+        effectivePaused:
+          type: boolean
+        manualPaused:
+          type: boolean
+        mode:
+          type: string
+          enum: [manual_pause, auto_pause, recovery_pause, active, unavailable]
+        blockers:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyBlocker"
+        health:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              required: [risk, score, reasons, recommendation]
+              properties:
+                risk:
+                  type: string
+                  enum: [low, medium, high, critical, unknown]
+                score:
+                  type: [number, "null"]
+                  minimum: 0
+                  maximum: 100
+                autoPauseAt:
+                  type: [string, "null"]
+                reasons:
+                  type: array
+                  items:
+                    type: string
+                recommendation:
+                  type: string
+                stats:
+                  type: [object, "null"]
+        rates:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              properties:
+                minute:
+                  $ref: "#/components/schemas/SafetyRateWindow"
+                hour:
+                  $ref: "#/components/schemas/SafetyRateWindow"
+                day:
+                  $ref: "#/components/schemas/SafetyRateWindow"
+        warmup:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              properties:
+                data:
+                  type: [object, "null"]
+                  properties:
+                    day:
+                      type: integer
+                    totalDays:
+                      type: integer
+                    sentToday:
+                      type: integer
+                    limitToday:
+                      type: integer
+                    remainingToday:
+                      type: integer
+                    progressRatio:
+                      type: number
+                      minimum: 0
+                      maximum: 1
+        timelock:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              properties:
+                active:
+                  type: [boolean, "null"]
+                enforcementType:
+                  type: [string, "null"]
+                detectedAt:
+                  type: [string, "null"]
+                  format: date-time
+                expiresAt:
+                  type: [string, "null"]
+                  format: date-time
+                errorCount:
+                  type: integer
+        recovery:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              required: [resetEligible]
+              properties:
+                phase:
+                  type: [string, "null"]
+                rateMultiplier:
+                  type: [number, "null"]
+                pauseRemainingMs:
+                  type: [number, "null"]
+                pauseUntil:
+                  type: [string, "null"]
+                  format: date-time
+                estimatedFullRecoveryAt:
+                  type: [string, "null"]
+                  format: date-time
+                recommendation:
+                  type: [string, "null"]
+                shouldReplaceNumber:
+                  type: [boolean, "null"]
+                resetEligible:
+                  type: boolean
+        delivery:
+          allOf:
+            - $ref: "#/components/schemas/SafetyFeature"
+            - type: object
+              properties:
+                data:
+                  type: [object, "null"]
+                  properties:
+                    sentInWindow:
+                      type: integer
+                    deliveredInWindow:
+                      type: integer
+                    deliveryRate:
+                      type: [number, "null"]
+                    sampleState:
+                      type: string
+                      enum: [available, insufficient_sample]
+                    windowMs:
+                      type: number
+        retry:
+          $ref: "#/components/schemas/SafetyOptionalFeature"
+        reconnect:
+          $ref: "#/components/schemas/SafetyOptionalFeature"
+        sessionStability:
+          $ref: "#/components/schemas/SafetyOptionalFeature"
+        counters:
+          type: [object, "null"]
+          properties:
+            messagesAllowed:
+              type: integer
+            messagesBlocked:
+              type: integer
+            totalDelayMs:
+              type: number
+        recentDelays:
+          type: array
+          items:
+            $ref: "#/components/schemas/SafetyDelayEvent"
+        config:
+          $ref: "#/components/schemas/SafetyConfig"
+        capabilities:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/SafetyFeature"
+        snapshot:
+          $ref: "#/components/schemas/SafetySnapshot"
+
+    SafetyFeature:
+      type: object
+      required: [state, reason]
+      properties:
+        state:
+          type: string
+          enum: [enabled, disabled, not_instrumented, unavailable]
+        reason:
+          type: [string, "null"]
+
+    SafetyOptionalFeature:
+      allOf:
+        - $ref: "#/components/schemas/SafetyFeature"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: [object, "null"]
+
+    SafetyBlocker:
+      type: object
+      additionalProperties: false
+      required: [code, source, message, recommendation, retryAt]
+      properties:
+        code:
+          type: string
+        source:
+          type: string
+        message:
+          type: string
+        recommendation:
+          type: string
+        retryAt:
+          type: [string, "null"]
+          format: date-time
+
+    SafetyRateWindow:
+      type: [object, "null"]
+      properties:
+        used:
+          type: number
+        limit:
+          type: number
+        utilization:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    SafetyDelayEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - messageId
+        - outboxId
+        - reasonCode
+        - message
+        - recommendation
+        - nextAttemptInMs
+        - occurredAt
+      properties:
+        id:
+          type: string
+        messageId:
+          type: string
+          format: uuid
+        outboxId:
+          type: [string, "null"]
+          format: uuid
+        reasonCode:
+          type: string
+        message:
+          type: [string, "null"]
+        recommendation:
+          type: [string, "null"]
+        nextAttemptInMs:
+          type: [number, "null"]
+        occurredAt:
+          type: string
+          format: date-time
+
+    SafetyConfig:
+      type: object
+      required: [state, preset, mutable, values]
+      properties:
+        state:
+          type: string
+          enum: [enabled, disabled, not_instrumented, unavailable]
+        preset:
+          type: string
+          enum: [conservative]
+        mutable:
+          type: boolean
+        values:
+          type: [object, "null"]
+          properties:
+            perMinute:
+              type: number
+            perHour:
+              type: number
+            perDay:
+              type: number
+            minDelayMs:
+              type: number
+            maxDelayMs:
+              type: number
+            newChatDelayMs:
+              type: number
+            warmupDays:
+              type: integer
+            autoPauseAt:
+              type: string
 
     ReasonRequest:
       type: object
@@ -1421,5 +2533,39 @@ components:
       properties:
         reason:
           type: string
-          minLength: 3
+          minLength: 5
           maxLength: 500
+
+    SafetyResumeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, currentPassword, acknowledgement]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        currentPassword:
+          type: string
+          writeOnly: true
+          maxLength: 256
+        acknowledgement:
+          type: string
+          enum: [I_UNDERSTAND_THE_RISK]
+
+    SafetyResetRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, currentPassword, confirmation]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        currentPassword:
+          type: string
+          writeOnly: true
+          maxLength: 256
+        confirmation:
+          type: string
+          enum: [RESET_SAFETY_STATE]

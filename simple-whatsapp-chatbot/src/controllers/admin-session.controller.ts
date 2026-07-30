@@ -1,6 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
 import { AppError } from '../middleware/error.middleware.js';
-import { AuditService } from '../services/audit.service.js';
+import {
+  AuditService,
+  recordAuditOutcome
+} from '../services/audit.service.js';
 import { OperationalEventService } from '../services/operational-event.service.js';
 import { OverviewService } from '../services/overview.service.js';
 import {
@@ -71,9 +74,19 @@ export class AdminSessionController {
     const before = this.whatsappService.getOperationalStatus();
 
     try {
+      await this.auditService.record({
+        actorUserId: request.adminAuth!.id,
+        action: 'session.reconnect_requested_intent',
+        resourceType: 'whatsapp_session',
+        reason: 'Operator requested reconnect',
+        beforeState: before,
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
       await this.whatsappService.requestReconnect();
       const overview = await this.overviewService.getOverview();
-      await this.auditService.record({
+      await recordAuditOutcome(this.auditService, {
         actorUserId: request.adminAuth!.id,
         action: 'session.reconnect_requested',
         resourceType: 'whatsapp_session',
@@ -147,9 +160,14 @@ export class AdminSessionController {
       }
     };
 
-    void sendOverview(`initial-${request.requestId}`);
+    let sendChain = Promise.resolve();
+    const queueOverview = (id: string) => {
+      sendChain = sendChain.then(() => sendOverview(id));
+    };
+
+    queueOverview(`initial-${request.requestId}`);
     const unsubscribe = this.operationalEvents.subscribe((event) => {
-      void sendOverview(event.id);
+      queueOverview(event.id);
     });
     const heartbeat = setInterval(() => {
       if (!response.writableEnded) {

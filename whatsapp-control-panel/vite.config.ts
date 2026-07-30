@@ -8,7 +8,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
-        changeOrigin: true
+        // Preserve localhost:5173 so the backend same-origin guard can compare
+        // it with the browser Origin header during development.
+        changeOrigin: false
       }
     }
   },

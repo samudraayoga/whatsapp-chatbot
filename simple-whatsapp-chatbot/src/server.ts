@@ -11,10 +11,16 @@ import { AuditService } from './services/audit.service.js';
 import { OverviewService } from './services/overview.service.js';
 import { OperationalEventService } from './services/operational-event.service.js';
 import { logger } from './utils/logger.js';
+import { OutboxService } from './services/outbox.service.js';
+import { OutboxWorker } from './services/outbox-worker.service.js';
+import { SafetyCenterService } from './services/safety-center.service.js';
+import { HandoffService } from './services/handoff.service.js';
 
 const chatbotService = new ChatbotService();
 const messageService = new MessageService();
 const operationalEventService = new OperationalEventService();
+const outboxService = new OutboxService();
+const handoffService = new HandoffService();
 const whatsappService = new WhatsAppService(
   chatbotService,
   messageService,
@@ -27,7 +33,14 @@ const adminAuthService = new AdminAuthService(undefined, {
 const overviewService = new OverviewService(
   whatsappService,
   undefined,
-  operationalEventService
+  operationalEventService,
+  outboxService,
+  handoffService
+);
+const outboxWorker = new OutboxWorker(outboxService, whatsappService);
+const safetyCenterService = new SafetyCenterService(
+  whatsappService,
+  outboxService
 );
 
 let httpServer: Server | null = null;
@@ -58,6 +71,7 @@ const shutdown = async (signal: string): Promise<void> => {
       });
     });
 
+    outboxWorker.stop();
     await whatsappService.disconnect();
     await closeDatabase();
     logger.info('Graceful shutdown completed');
@@ -73,6 +87,8 @@ const startServer = async (): Promise<void> => {
   try {
     await connectDatabase();
     await runMigrations();
+    await chatbotService.warmCache();
+    await safetyCenterService.restoreManualState();
     await adminAuthService.ensureBootstrapAdmin({
       username: env.ADMIN_BOOTSTRAP_USERNAME,
       password: env.ADMIN_BOOTSTRAP_PASSWORD,
@@ -80,6 +96,7 @@ const startServer = async (): Promise<void> => {
     });
     await adminAuthService.removeExpiredSessions();
     await whatsappService.connect();
+    outboxWorker.start();
 
     const app = createApp({
       whatsappService,
@@ -87,7 +104,11 @@ const startServer = async (): Promise<void> => {
       adminAuthService,
       auditService,
       overviewService,
-      operationalEventService
+      operationalEventService,
+      outboxService,
+      handoffService,
+      chatbotService,
+      safetyCenterService
     });
 
     httpServer = app.listen(env.PORT, () => {

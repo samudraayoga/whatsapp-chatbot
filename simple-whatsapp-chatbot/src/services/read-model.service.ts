@@ -29,6 +29,7 @@ type ConversationRow = {
 
 type MessageRow = {
   id: string;
+  cursor_id: string;
   whatsapp_message_id: string | null;
   direction: 'incoming' | 'outgoing';
   message_type: string;
@@ -114,7 +115,7 @@ export class ReadModelService {
           contacts.display_name,
           contacts.phone_number,
           contacts.identity_status,
-          latest.id::text AS last_message_id,
+          COALESCE(latest.logical_id::text, latest.id::text) AS last_message_id,
           latest.created_at AS last_message_at,
           latest.message_type AS last_message_type,
           latest.content AS last_message_content,
@@ -124,7 +125,7 @@ export class ReadModelService {
           counts.outgoing_count::text
         FROM contacts
         INNER JOIN LATERAL (
-          SELECT id, created_at, message_type, content, direction
+          SELECT id, logical_id, created_at, message_type, content, direction
           FROM messages
           WHERE messages.contact_id = contacts.id
           ORDER BY created_at DESC, id DESC
@@ -204,7 +205,8 @@ export class ReadModelService {
     const result = await this.database.query<MessageRow>(
       `
         SELECT
-          id::text,
+          COALESCE(logical_id::text, id::text) AS id,
+          id::text AS cursor_id,
           whatsapp_message_id,
           direction,
           message_type,
@@ -238,7 +240,7 @@ export class ReadModelService {
         hasMore && last
           ? encodeCursor({
               occurredAt: last.created_at.toISOString(),
-              id: last.id
+              id: last.cursor_id
             })
           : null
     };

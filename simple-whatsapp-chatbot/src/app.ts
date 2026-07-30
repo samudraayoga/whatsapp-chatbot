@@ -22,7 +22,12 @@ import { ReadModelService } from './services/read-model.service.js';
 import { AdminReadController } from './controllers/admin-read.controller.js';
 import { HandoffService } from './services/handoff.service.js';
 import { AdminHandoffController } from './controllers/admin-handoff.controller.js';
+import { AdminMessageController } from './controllers/admin-message.controller.js';
+import { OutboxService } from './services/outbox.service.js';
 import { env } from './config/env.js';
+import { ChatbotService } from './services/chatbot.service.js';
+import { AdminChatbotController } from './controllers/admin-chatbot.controller.js';
+import { SafetyCenterService } from './services/safety-center.service.js';
 
 type CreateAppDeps = {
   whatsappService: WhatsAppService;
@@ -34,6 +39,9 @@ type CreateAppDeps = {
   operationalEventService?: OperationalEventService;
   readModelService?: ReadModelService;
   handoffService?: HandoffService;
+  outboxService?: OutboxService;
+  chatbotService?: ChatbotService;
+  safetyCenterService?: SafetyCenterService;
 };
 
 export const createApp = ({
@@ -45,13 +53,17 @@ export const createApp = ({
   overviewService,
   operationalEventService,
   readModelService,
-  handoffService
+  handoffService,
+  outboxService,
+  chatbotService,
+  safetyCenterService
 }: CreateAppDeps) => {
   const app = express();
   const messageController = new MessageController({ whatsappService, messageService });
   const resolvedAuditService = auditService ?? new AuditService();
   const resolvedOperationalEventService =
     operationalEventService ?? new OperationalEventService();
+  const resolvedOutboxService = outboxService ?? new OutboxService();
   const resolvedAuthService =
     adminAuthService ??
     new AdminAuthService(undefined, {
@@ -62,7 +74,9 @@ export const createApp = ({
     new OverviewService(
       whatsappService,
       databaseHealthCheck,
-      resolvedOperationalEventService
+      resolvedOperationalEventService,
+      resolvedOutboxService,
+      handoffService ?? new HandoffService()
     );
   const adminAuthController = new AdminAuthController(
     resolvedAuthService,
@@ -77,10 +91,13 @@ export const createApp = ({
     resolvedAuditService,
     resolvedOperationalEventService
   );
+  const resolvedSafetyCenterService =
+    safetyCenterService ??
+    new SafetyCenterService(whatsappService, resolvedOutboxService);
   const adminSafetyController = new AdminSafetyController(
-    whatsappService,
-    resolvedOverviewService,
-    resolvedAuditService
+    resolvedSafetyCenterService,
+    resolvedAuditService,
+    resolvedAuthService
   );
   const adminReadController = new AdminReadController(
     readModelService ?? new ReadModelService()
@@ -89,8 +106,19 @@ export const createApp = ({
     handoffService ?? new HandoffService(),
     resolvedAuditService
   );
+  const adminMessageController = new AdminMessageController(
+    resolvedOutboxService,
+    resolvedAuditService
+  );
+  const adminChatbotController = new AdminChatbotController(
+    chatbotService ?? new ChatbotService(),
+    resolvedAuditService
+  );
 
   app.disable('x-powered-by');
+  if (env.TRUST_PROXY_HOPS > 0) {
+    app.set('trust proxy', env.TRUST_PROXY_HOPS);
+  }
   app.use(helmet());
   app.use(requestIdMiddleware);
   app.use(express.json({ limit: '1mb' }));
@@ -104,7 +132,9 @@ export const createApp = ({
       sessionController: adminSessionController,
       safetyController: adminSafetyController,
       readController: adminReadController,
-      handoffController: adminHandoffController
+      handoffController: adminHandoffController,
+      messageController: adminMessageController,
+      chatbotController: adminChatbotController
     })
   );
   app.use(createWhatsAppRouter(whatsappService));

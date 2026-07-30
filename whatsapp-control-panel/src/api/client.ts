@@ -1,7 +1,8 @@
 import { overviewResponseSchema, type OverviewResponse } from './contracts';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 export const sessionExpiredEvent = 'admin-session-expired';
+export const resolveApiUrl = (path: string): string => `${apiBaseUrl}${path}`;
 
 export class ApiClientError extends Error {
   constructor(
@@ -18,7 +19,7 @@ export const requestJson = async (
   path: string,
   init: RequestInit = {}
 ): Promise<unknown> => {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(resolveApiUrl(path), {
     ...init,
     credentials: 'include',
     headers: {
@@ -59,12 +60,6 @@ export const requestJson = async (
 };
 
 export const getOverview = async (): Promise<OverviewResponse> => {
-  if (import.meta.env.DEV && import.meta.env.VITE_ENABLE_MOCKS === 'true') {
-    const { getOverviewScenario } = await import('../mocks/scenario');
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-    return getOverviewScenario();
-  }
-
   return overviewResponseSchema.parse(
     await requestJson('/api/admin/v1/overview')
   );

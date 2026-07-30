@@ -76,7 +76,8 @@ describe('MessageService deduplication characterization', () => {
         whatsappMessageId: 'provider-menu-5',
         whatsappJid: '6281234567890@s.whatsapp.net',
         direction: 'incoming',
-        content: '5'
+        content: '5',
+        createHandoff: true
       })
     ).resolves.toEqual({ inserted: true });
 
@@ -104,7 +105,8 @@ describe('MessageService deduplication characterization', () => {
         whatsappMessageId: 'provider-menu-5',
         whatsappJid: '6281234567890@s.whatsapp.net',
         direction: 'incoming',
-        content: '5'
+        content: '5',
+        createHandoff: true
       })
     ).resolves.toEqual({ inserted: false });
 

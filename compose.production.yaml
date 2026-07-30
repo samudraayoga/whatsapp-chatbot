@@ -1,0 +1,72 @@
+services:
+  control-panel:
+    build:
+      context: .
+      dockerfile: whatsapp-control-panel/Dockerfile
+    ports:
+      - "${CONTROL_PANEL_BIND_IP:-127.0.0.1}:${CONTROL_PANEL_PORT:-8080}:8080"
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: simple-whatsapp-chatbot/Dockerfile
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: db
+      WA_AUTH_PATH: /app/auth
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+    expose:
+      - "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 12
+    volumes:
+      - whatsapp_auth:/app/auth
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - ${PRODUCTION_ENV_FILE:-.env.production}
+    expose:
+      - "5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  whatsapp_auth:

@@ -23,6 +23,8 @@ type SaveMessageInput = {
   messageType?: string;
   status?: string;
   displayName?: string | null;
+  metadata?: Record<string, unknown>;
+  createHandoff?: boolean;
 };
 
 export class MessageService {
@@ -93,9 +95,10 @@ export class MessageService {
           direction,
           message_type,
           content,
-          status
+          status,
+          metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         ON CONFLICT (whatsapp_message_id) DO NOTHING
         RETURNING id;
       `,
@@ -105,13 +108,14 @@ export class MessageService {
         input.direction,
         input.messageType ?? 'text',
         input.content,
-        input.status ?? (input.direction === 'incoming' ? 'received' : 'sent')
+        input.status ?? (input.direction === 'incoming' ? 'received' : 'sent'),
+        JSON.stringify(input.metadata ?? {})
       ]
     );
 
     const inserted = (result.rowCount ?? 0) > 0;
 
-    if (input.direction === 'incoming' && input.content.trim() === '5') {
+    if (input.direction === 'incoming' && input.createHandoff) {
       let sourceMessageId = result.rows[0]?.id;
 
       if (!sourceMessageId && input.whatsappMessageId) {

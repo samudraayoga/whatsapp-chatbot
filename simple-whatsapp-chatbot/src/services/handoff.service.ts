@@ -79,6 +79,38 @@ const selectColumns = `
 export class HandoffService {
   constructor(private readonly database: QueryExecutor = pool) {}
 
+  async getSummary(): Promise<{
+    open: number;
+    unassigned: number;
+    overdue: number;
+  }> {
+    const result = await this.database.query<{
+      open: string;
+      unassigned: string;
+      overdue: string;
+    }>(
+      `
+        SELECT
+          COUNT(*) FILTER (WHERE state IN ('open', 'assigned'))::text AS open,
+          COUNT(*) FILTER (
+            WHERE state = 'open' AND assignee_user_id IS NULL
+          )::text AS unassigned,
+          COUNT(*) FILTER (
+            WHERE state IN ('open', 'assigned')
+              AND due_at IS NOT NULL
+              AND due_at < NOW()
+          )::text AS overdue
+        FROM handoff_tasks;
+      `
+    );
+    const row = result.rows[0];
+    return {
+      open: Number(row.open),
+      unassigned: Number(row.unassigned),
+      overdue: Number(row.overdue)
+    };
+  }
+
   async list(input: {
     state?: HandoffState | 'all';
     cursor?: string;

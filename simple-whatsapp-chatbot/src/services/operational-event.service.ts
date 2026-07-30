@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { pool } from '../database/connection.js';
 import { logger } from '../utils/logger.js';
+import { sanitizeOperationalError } from '../utils/sanitize.js';
 import type { QueryExecutor } from './message.service.js';
 
 export type OperationalEvent = {
@@ -19,11 +20,11 @@ export class OperationalEventService {
     this.emitter.setMaxListeners(100);
   }
 
-  publish(input: {
+  async publish(input: {
     type: string;
     severity?: OperationalEvent['severity'];
     data?: Record<string, unknown>;
-  }): OperationalEvent {
+  }): Promise<OperationalEvent> {
     const event: OperationalEvent = {
       id: randomUUID(),
       type: input.type,
@@ -32,8 +33,8 @@ export class OperationalEventService {
       data: input.data ?? {}
     };
 
+    await this.persist(event);
     this.emitter.emit('event', event);
-    void this.persist(event);
     return event;
   }
 
@@ -92,7 +93,7 @@ export class OperationalEventService {
     } catch (error) {
       logger.error('Failed to persist operational event', {
         eventType: event.type,
-        error: error instanceof Error ? error.message : 'Unknown database error'
+        error: sanitizeOperationalError(error, 'Unknown database error')
       });
     }
   }

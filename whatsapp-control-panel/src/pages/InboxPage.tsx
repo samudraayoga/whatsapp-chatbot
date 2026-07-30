@@ -18,14 +18,21 @@ import {
   getMessages,
   resolveHandoff
 } from '../api/inbox';
-import type { AdminUser, Contact, Message } from '../api/contracts';
+import type {
+  AdminUser,
+  Contact,
+  Message,
+  OverviewData
+} from '../api/contracts';
 import { ApiClientError } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 import { navigate } from '../routing/navigation';
+import { MessageComposer } from '../components/MessageComposer';
 
 type InboxPageProps = {
   pathname: string;
   user: AdminUser;
+  overview?: OverviewData;
 };
 
 const formatDateTime = (value: string | null) =>
@@ -286,7 +293,11 @@ const FollowUpQueue = ({ user }: { user: AdminUser }) => {
   );
 };
 
-const ConversationInbox = ({ pathname }: Pick<InboxPageProps, 'pathname'>) => {
+const ConversationInbox = ({
+  pathname,
+  user,
+  overview
+}: InboxPageProps) => {
   const routeId = pathname.match(/^\/inbox\/(\d+)$/)?.[1] ?? null;
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<
@@ -471,6 +482,16 @@ const ConversationInbox = ({ pathname }: Pick<InboxPageProps, 'pathname'>) => {
                   ))
                 )}
               </div>
+              <MessageComposer
+                overview={overview}
+                recipient={{ contactId: routeId }}
+                recipientLabel={
+                  selected?.displayName ??
+                  selected?.maskedPhone ??
+                  `Contact #${routeId}`
+                }
+                user={user}
+              />
             </>
           )}
         </section>
@@ -487,9 +508,9 @@ const ConversationInbox = ({ pathname }: Pick<InboxPageProps, 'pathname'>) => {
   );
 };
 
-export const InboxPage = ({ pathname, user }: InboxPageProps) =>
+export const InboxPage = ({ pathname, user, overview }: InboxPageProps) =>
   pathname === '/inbox/follow-ups' ? (
     <FollowUpQueue user={user} />
   ) : (
-    <ConversationInbox pathname={pathname} />
+    <ConversationInbox pathname={pathname} user={user} overview={overview} />
   );

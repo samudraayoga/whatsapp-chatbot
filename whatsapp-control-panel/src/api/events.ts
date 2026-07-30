@@ -5,25 +5,27 @@ import {
   type SessionResponse
 } from './contracts';
 import { overviewQueryKey, sessionQueryKey } from './queries';
+import { resolveApiUrl } from './client';
 
 export type StreamState = 'connecting' | 'live' | 'polling';
-const isMockMode =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_MOCKS === 'true';
 
 export const useOperationalEvents = (enabled: boolean): StreamState => {
   const queryClient = useQueryClient();
   const [state, setState] = useState<StreamState>(
-    typeof EventSource === 'undefined' || isMockMode ? 'polling' : 'connecting'
+    typeof EventSource === 'undefined' ? 'polling' : 'connecting'
   );
 
   useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined' || isMockMode) {
+    if (!enabled || typeof EventSource === 'undefined') {
       return;
     }
 
-    const source = new EventSource('/api/admin/v1/events/stream', {
-      withCredentials: true
-    });
+    const source = new EventSource(
+      resolveApiUrl('/api/admin/v1/events/stream'),
+      {
+        withCredentials: true
+      }
+    );
     source.onopen = () => setState('live');
     source.onerror = () => {
       setState('polling');

@@ -16,6 +16,11 @@ import { SessionPage } from './pages/SessionPage';
 import { useOperationalEvents } from './api/events';
 import { InboxPage } from './pages/InboxPage';
 import { ContactsPage } from './pages/ContactsPage';
+import { OutboxPage } from './pages/OutboxPage';
+import { MessageDetailPage } from './pages/MessageDetailPage';
+import { ComposePage } from './pages/ComposePage';
+import { ChatbotRulesPage } from './pages/ChatbotRulesPage';
+import { SafetyCenterPage } from './pages/SafetyCenterPage';
 
 export const App = () => {
   const locationPath = useLocationPath();
@@ -109,11 +114,32 @@ export const App = () => {
       ) : pathname === '/inbox' ||
         pathname === '/inbox/follow-ups' ||
         /^\/inbox\/\d+$/.test(pathname) ? (
-        <InboxPage pathname={pathname} user={adminQuery.data.data} />
+        <InboxPage
+          pathname={pathname}
+          user={adminQuery.data.data}
+          overview={overviewQuery.data?.data}
+        />
       ) : pathname === '/contacts' || /^\/contacts\/\d+$/.test(pathname) ? (
         <ContactsPage pathname={pathname} />
+      ) : pathname === '/messages/outbox' ? (
+        <OutboxPage user={adminQuery.data.data} />
+      ) : pathname === '/messages/compose' ? (
+        <ComposePage
+          user={adminQuery.data.data}
+          overview={overviewQuery.data?.data}
+        />
+      ) : /^\/messages\/[0-9a-f-]{36}$/i.test(pathname) ? (
+        <MessageDetailPage
+          messageId={pathname.slice('/messages/'.length)}
+          user={adminQuery.data.data}
+        />
       ) : pathname === '/operations/session' ? (
         <SessionPage user={adminQuery.data.data} streamState={streamState} />
+      ) : pathname === '/operations/safety' ? (
+        <SafetyCenterPage user={adminQuery.data.data} />
+      ) : pathname === '/chatbot/rules' &&
+        adminQuery.data.data.permissions.includes('chatbot.manage') ? (
+        <ChatbotRulesPage />
       ) : (
         <section className="page-state page-state--error">
           <p className="eyebrow">404</p>

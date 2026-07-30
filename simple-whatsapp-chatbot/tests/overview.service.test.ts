@@ -59,4 +59,27 @@ describe('OverviewService Sprint 2 readiness', () => {
     expect(result.readiness.database).toBe('disconnected');
     expect(result.readiness.blockers).toContain('database_unavailable');
   });
+
+  it('uses the worker sending blocks for recovery-dead and warm-up readiness', async () => {
+    const whatsapp = {
+      getOperationalStatus: vi.fn(() => connectedSession),
+      getProtectionSnapshot: vi.fn(() => null),
+      isSendingPaused: vi.fn(() => false),
+      getSendingBlocks: vi.fn(() => [
+        { code: 'RECOVERY_DEAD', retryAfterMs: 60_000 },
+        { code: 'WARMUP_LIMIT', retryAfterMs: 60_000 }
+      ])
+    } as unknown as WhatsAppService;
+    const events = {
+      listRecent: vi.fn(async () => [])
+    } as unknown as OperationalEventService;
+    const service = new OverviewService(whatsapp, async () => true, events);
+
+    const result = await service.getOverview();
+
+    expect(result.readiness.readyToSend).toBe(false);
+    expect(result.readiness.blockers).toEqual(
+      expect.arrayContaining(['recovery_dead', 'warmup_limit'])
+    );
+  });
 });
