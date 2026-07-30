@@ -5,6 +5,8 @@ services:
       dockerfile: simple-whatsapp-chatbot/Dockerfile
     env_file:
       - .env
+    environment:
+      POSTGRES_HOST: db
     ports:
       - "3000:3000"
     depends_on:

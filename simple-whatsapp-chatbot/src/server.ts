@@ -6,11 +6,29 @@ import { runMigrations } from './database/migrate.js';
 import { ChatbotService } from './services/chatbot.service.js';
 import { MessageService } from './services/message.service.js';
 import { WhatsAppService } from './services/whatsapp.service.js';
+import { AdminAuthService } from './services/admin-auth.service.js';
+import { AuditService } from './services/audit.service.js';
+import { OverviewService } from './services/overview.service.js';
+import { OperationalEventService } from './services/operational-event.service.js';
 import { logger } from './utils/logger.js';
 
 const chatbotService = new ChatbotService();
 const messageService = new MessageService();
-const whatsappService = new WhatsAppService(chatbotService, messageService);
+const operationalEventService = new OperationalEventService();
+const whatsappService = new WhatsAppService(
+  chatbotService,
+  messageService,
+  operationalEventService
+);
+const auditService = new AuditService();
+const adminAuthService = new AdminAuthService(undefined, {
+  sessionTtlMs: env.ADMIN_SESSION_TTL_HOURS * 60 * 60 * 1000
+});
+const overviewService = new OverviewService(
+  whatsappService,
+  undefined,
+  operationalEventService
+);
 
 let httpServer: Server | null = null;
 let isShuttingDown = false;
@@ -55,9 +73,22 @@ const startServer = async (): Promise<void> => {
   try {
     await connectDatabase();
     await runMigrations();
+    await adminAuthService.ensureBootstrapAdmin({
+      username: env.ADMIN_BOOTSTRAP_USERNAME,
+      password: env.ADMIN_BOOTSTRAP_PASSWORD,
+      displayName: env.ADMIN_BOOTSTRAP_DISPLAY_NAME
+    });
+    await adminAuthService.removeExpiredSessions();
     await whatsappService.connect();
 
-    const app = createApp({ whatsappService, messageService });
+    const app = createApp({
+      whatsappService,
+      messageService,
+      adminAuthService,
+      auditService,
+      overviewService,
+      operationalEventService
+    });
 
     httpServer = app.listen(env.PORT, () => {
       logger.info('Server started', {

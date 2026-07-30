@@ -5,10 +5,17 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
+    "predev": "npm run dev:db",
+    "dev:db": "docker compose up -d --wait db",
     "dev": "tsx watch src/server.ts",
+    "dev:stop": "docker compose stop db",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run typecheck:test && npm run test && npm run build"
   },
   "keywords": [
     "whatsapp",
@@ -23,18 +30,23 @@
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.13",
     "baileys-antiban": "file:../baileys-antiban",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.6.1",
+    "helmet": "^8.3.0",
     "pg": "^8.16.3",
-    "pino": "^10.0.0",
-    "qrcode-terminal": "^0.12.0"
+    "pino": "^10.0.0"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.3",
     "@types/node": "^24.0.15",
     "@types/pg": "^8.20.0",
-    "@types/qrcode-terminal": "^0.12.2",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
     "tsx": "^4.20.3",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
   }
 }

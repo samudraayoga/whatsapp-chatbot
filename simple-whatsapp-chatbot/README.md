@@ -4,12 +4,16 @@ Backend chatbot WhatsApp sederhana untuk MVP local development dengan Node.js 22
 
 ## Fitur
 
-- Menampilkan QR WhatsApp di terminal.
+- Menampilkan QR pairing ephemeral melalui control panel terautentikasi.
 - Menyimpan session WhatsApp di volume Docker agar tidak perlu scan ulang setiap restart.
 - Menerima pesan WhatsApp personal.
 - Membalas otomatis dengan rule chatbot sederhana.
 - Menyimpan pesan incoming dan outgoing ke PostgreSQL.
 - Mengirim pesan WhatsApp melalui REST API yang dilindungi API key.
+- Menyediakan Admin API dengan session cookie, RBAC, CSRF, audit, dan login throttling.
+- Menyediakan liveness, readiness, dan operational overview untuk control panel.
+- Menyediakan pencarian contact, histori pesan cursor-paginated, identity warning,
+  dan human follow-up queue untuk pilihan menu `5`.
 
 ## Struktur Project
 
@@ -73,28 +77,70 @@ POSTGRES_PASSWORD=postgres
 
 API_KEY=development-secret-key
 WA_AUTH_PATH=./auth
+
+ADMIN_BOOTSTRAP_USERNAME=admin
+ADMIN_BOOTSTRAP_PASSWORD=admin123
+ADMIN_BOOTSTRAP_DISPLAY_NAME=Local Admin
+ADMIN_SESSION_TTL_HOURS=8
 ```
 
+Ganti bootstrap password untuk environment selain local. Pada `NODE_ENV=production`,
+`ADMIN_BOOTSTRAP_PASSWORD` wajib diisi. Nilai ini hanya membuat user pertama dan
+tidak merotasi password user yang sudah ada.
+
 ## Menjalankan Aplikasi
+
+### Development — direkomendasikan
+
+Satu perintah ini otomatis menyalakan PostgreSQL lewat Docker, menunggu sampai
+healthy, kemudian menjalankan backend dengan hot reload:
+
+```bash
+npm run dev
+```
+
+Backend tersedia di `http://localhost:3000`. PostgreSQL tetap berjalan ketika
+backend dihentikan dengan `Ctrl+C`. Untuk menghentikan database:
+
+```bash
+npm run dev:stop
+```
+
+Docker Desktop harus sudah aktif dan `.env` memakai:
+
+```dotenv
+POSTGRES_HOST=localhost
+```
+
+### Seluruh backend di Docker
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
+Compose otomatis mengganti `POSTGRES_HOST` menjadi `db` untuk container app.
+
 Setelah itu:
 
 1. Tunggu PostgreSQL menjadi healthy.
-2. Tunggu QR code WhatsApp muncul di terminal atau log container `app`.
-3. Buka WhatsApp di HP.
-4. Masuk ke menu **Perangkat Tertaut**.
-5. Scan QR code.
-6. Tunggu log `WhatsApp connected`.
+2. Jalankan package sibling `whatsapp-control-panel`.
+3. Login lalu buka menu **Operations**.
+4. Buka WhatsApp di HP dan masuk ke menu **Perangkat Tertaut**.
+5. Scan QR ephemeral yang tampil di control panel.
+6. Tunggu state berubah menjadi `connected`.
 
 ## Menguji Health Check
 
 ```bash
 curl http://localhost:3000/health
+```
+
+Probe baru:
+
+```bash
+curl http://localhost:3000/health/live
+curl http://localhost:3000/health/ready
 ```
 
 Contoh response:
@@ -187,6 +233,30 @@ docker compose up --build
 
 ## Endpoint
 
+### Admin API Sprint 1–3
+
+- `POST /api/admin/v1/auth/login`
+- `GET /api/admin/v1/me`
+- `POST /api/admin/v1/auth/logout`
+- `GET /api/admin/v1/overview`
+- `GET /api/admin/v1/session`
+- `GET /api/admin/v1/session/qr`
+- `POST /api/admin/v1/session/reconnect`
+- `GET /api/admin/v1/safety/stats`
+- `POST /api/admin/v1/safety/pause`
+- `GET /api/admin/v1/events/stream`
+- `GET /api/admin/v1/conversations`
+- `GET /api/admin/v1/conversations/:conversationId/messages`
+- `GET /api/admin/v1/contacts`
+- `GET /api/admin/v1/contacts/:contactId`
+- `GET /api/admin/v1/handoffs`
+- `POST /api/admin/v1/handoffs/:handoffId/assign`
+- `POST /api/admin/v1/handoffs/:handoffId/resolve`
+
+Browser memakai opaque `admin_session` cookie. Cookie session bersifat `HttpOnly`;
+mutation juga wajib mengirim cookie `admin_csrf` melalui header `X-CSRF-Token`.
+Kontrak lengkap ada di `docs/control-panel/openapi.yaml`.
+
 ### `GET /health`
 
 Response:
@@ -255,6 +325,9 @@ Credential sensitif tidak dicetak ke log.
 - Request body divalidasi.
 - File `.env` tidak ikut ke image Docker dan tidak masuk git.
 - Session WhatsApp tidak dicetak ke log.
+- Raw pairing QR tidak dicetak ke terminal/log dan tidak disimpan di database.
+- Password admin disimpan sebagai salted scrypt hash.
+- Session token dan CSRF token hanya disimpan sebagai hash di database.
 
 ## Catatan Penggunaan Baileys
 
@@ -266,7 +339,6 @@ Baileys bukan WhatsApp Business Cloud API resmi. Penggunaannya harus memperhatik
 - `pg`
 - `dotenv`
 - `@whiskeysockets/baileys`
-- `qrcode-terminal`
 - `pino`
 - `@hapi/boom`
 - `typescript`
@@ -274,7 +346,6 @@ Baileys bukan WhatsApp Business Cloud API resmi. Penggunaannya harus memperhatik
 
 ## Pengembangan Tahap Berikutnya
 
-- Menambahkan endpoint untuk melihat riwayat pesan.
+- Menambahkan durable outbox dan command kirim pesan asynchronous.
 - Menambahkan validasi schema dengan library seperti Zod.
-- Menambahkan test otomatis.
-- Menambahkan command atau webhook internal untuk logout session.
+- Menambahkan guarded reset/re-pair untuk Admin dengan step-up authentication.

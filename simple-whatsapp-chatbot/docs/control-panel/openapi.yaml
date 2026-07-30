@@ -1,0 +1,1425 @@
+openapi: 3.1.0
+info:
+  title: WhatsApp Chatbot Admin API
+  version: 0.4.0
+  summary: Sprint 3 contract for the WhatsApp control panel
+  description: |
+    Sprint 3 adds searchable contacts, cursor-paginated conversation history,
+    an identity facade, and audited human follow-up tasks to the Sprint 2
+    session and operational controls.
+    Later-sprint paths remain contract drafts.
+    Browser clients authenticate using a secure server-managed session cookie.
+servers:
+  - url: http://localhost:3000
+    description: Local backend
+tags:
+  - name: Identity
+  - name: Overview
+  - name: Messages
+  - name: Conversations
+  - name: Contacts
+  - name: Handoffs
+  - name: Session
+  - name: Safety
+  - name: Events
+security:
+  - sessionCookie: []
+
+paths:
+  /health/live:
+    get:
+      tags: [Overview]
+      operationId: getLiveness
+      summary: Confirm that the HTTP process is live
+      security: []
+      x-sprint: 1
+      responses:
+        "200":
+          description: Process is live
+
+  /health/ready:
+    get:
+      tags: [Overview]
+      operationId: getReadiness
+      summary: Report database and WhatsApp readiness independently
+      security: []
+      x-sprint: 1
+      responses:
+        "200":
+          description: Required dependencies are ready
+        "503":
+          description: At least one required dependency is unavailable
+
+  /api/admin/v1/auth/login:
+    post:
+      tags: [Identity]
+      operationId: loginAdmin
+      summary: Create an opaque server-managed admin session
+      security: []
+      x-sprint: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login succeeded; session and CSRF cookies are set
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentAdminResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Too many failed login attempts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/auth/logout:
+    post:
+      tags: [Identity]
+      operationId: logoutAdmin
+      summary: Revoke the current session and clear its cookies
+      x-sprint: 1
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Session revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/me:
+    get:
+      tags: [Identity]
+      operationId: getCurrentAdmin
+      summary: Return the authenticated admin and permissions
+      x-sprint: 1
+      responses:
+        "200":
+          description: Current identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentAdminResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/admin/v1/overview:
+    get:
+      tags: [Overview]
+      operationId: getOverview
+      summary: Return an operational snapshot for the control room
+      x-sprint: 1
+      responses:
+        "200":
+          description: Current operational snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OverviewResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/conversations:
+    get:
+      tags: [Conversations]
+      operationId: listConversations
+      summary: List conversation summaries using cursor pagination
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, has_failure, identity_warning]
+      responses:
+        "200":
+          description: Conversation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/conversations/{conversationId}/messages:
+    get:
+      tags: [Conversations]
+      operationId: listConversationMessages
+      summary: List messages for one conversation
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Message page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/contacts:
+    get:
+      tags: [Contacts]
+      operationId: listContacts
+      summary: Search contacts using stable cursor pagination
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Contact page with masked identity fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/contacts/{contactId}:
+    get:
+      tags: [Contacts]
+      operationId: getContact
+      summary: Return one contact and its identity facade
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/ContactId"
+      responses:
+        "200":
+          description: Contact detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/messages:
+    post:
+      tags: [Messages]
+      operationId: createMessage
+      summary: Accept an idempotent outbound message command
+      description: |
+        A successful response means accepted into the durable outbox, not sent to
+        WhatsApp. Reusing the same key and payload returns the same logical result.
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageRequest"
+      responses:
+        "202":
+          description: Message accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateMessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Idempotency key was reused with a different payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "423":
+          description: Sending is blocked by an operational policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/messages/{messageId}:
+    get:
+      tags: [Messages]
+      operationId: getMessage
+      summary: Return a logical message and immutable event timeline
+      x-sprint: 4
+      parameters:
+        - $ref: "#/components/parameters/MessageId"
+      responses:
+        "200":
+          description: Message detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageDetailResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/handoffs:
+    get:
+      tags: [Handoffs]
+      operationId: listHandoffs
+      summary: List human follow-up tasks
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [open, assigned, resolved, canceled]
+      responses:
+        "200":
+          description: Handoff page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/handoffs/{handoffId}/assign:
+    post:
+      tags: [Handoffs]
+      operationId: assignHandoff
+      summary: Claim or assign a follow-up task
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                assigneeUserId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Updated handoff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/handoffs/{handoffId}/resolve:
+    post:
+      tags: [Handoffs]
+      operationId: resolveHandoff
+      summary: Resolve a follow-up task
+      x-sprint: 3
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [resolutionNote]
+              properties:
+                resolutionNote:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Resolved handoff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/session:
+    get:
+      tags: [Session]
+      operationId: getSession
+      summary: Return rich session and send-readiness state
+      x-sprint: 2
+      responses:
+        "200":
+          description: Session snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/session/qr:
+    get:
+      tags: [Session]
+      operationId: getPairingQr
+      summary: Return a short-lived pairing QR only when required
+      description: Raw QR content must never be logged or persisted in the general database.
+      x-sprint: 2
+      responses:
+        "200":
+          description: Ephemeral QR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QrResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/session/reconnect:
+    post:
+      tags: [Session]
+      operationId: reconnectSession
+      summary: Request a guarded reconnect
+      x-sprint: 2
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "202":
+          description: Reconnect command accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/safety/stats:
+    get:
+      tags: [Safety]
+      operationId: getSafetyStats
+      summary: Return normalized anti-ban stats and capability states
+      x-sprint: 2
+      responses:
+        "200":
+          description: Safety snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/safety/pause:
+    post:
+      tags: [Safety]
+      operationId: pauseSending
+      summary: Emergency pause outbound sending
+      x-sprint: 2
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "200":
+          description: Effective pause state after the command
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/safety/resume:
+    post:
+      tags: [Safety]
+      operationId: resumeSending
+      summary: Request resume and return the effective state
+      description: Manual resume may remain effectively paused due to health or recovery policy.
+      x-sprint: 6
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "200":
+          description: Effective safety state after the command
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafetyResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "423":
+          description: Automatic safety policy still blocks sending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/events/stream:
+    get:
+      tags: [Events]
+      operationId: streamOperationalEvents
+      summary: Stream session, safety, message, and incident events
+      x-sprint: 2
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Server-Sent Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: admin_session
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 30
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^\d+$'
+    ContactId:
+      name: contactId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^\d+$'
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    HandoffId:
+      name: handoffId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication is required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: The current identity lacks permission
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    StateConflict:
+      description: Resource state does not allow this transition
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 100
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+
+    Meta:
+      type: object
+      additionalProperties: false
+      required: [requestId, generatedAt]
+      properties:
+        requestId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+
+    CursorMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          required: [nextCursor]
+          properties:
+            nextCursor:
+              type: [string, "null"]
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+              examples: [WHATSAPP_NOT_READY]
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            requestId:
+              type: string
+
+    CurrentAdminResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, username, displayName, role, permissions]
+          properties:
+            id:
+              type: string
+              format: uuid
+            username:
+              type: string
+            displayName:
+              type: string
+            role:
+              type: string
+              enum: [viewer, operator, admin]
+            permissions:
+              type: array
+              items:
+                type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ServiceState:
+      type: string
+      enum: [connected, disconnected, unknown]
+
+    SessionState:
+      type: string
+      enum:
+        - starting
+        - connecting
+        - qr_required
+        - connected
+        - reconnecting
+        - paused
+        - logged_out
+        - bad_session
+        - disconnected
+        - shutting_down
+
+    Risk:
+      type: string
+      enum: [low, medium, high, critical, unknown]
+
+    CapabilityState:
+      type: string
+      enum: [enabled, disabled, not_instrumented, unavailable]
+
+    RateWindow:
+      type: object
+      additionalProperties: false
+      required: [used, limit]
+      properties:
+        used:
+          type: number
+          minimum: 0
+        limit:
+          type: number
+          exclusiveMinimum: 0
+
+    OverviewResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [readiness, session, safety, rates, warmup, outbox, followUp, capabilities, recentEvents]
+          properties:
+            readiness:
+              $ref: "#/components/schemas/Readiness"
+            session:
+              $ref: "#/components/schemas/SessionSnapshot"
+            safety:
+              $ref: "#/components/schemas/SafetySnapshot"
+            rates:
+              type: object
+              additionalProperties: false
+              required: [minute, hour, day]
+              properties:
+                minute:
+                  oneOf:
+                    - $ref: "#/components/schemas/RateWindow"
+                    - type: "null"
+                hour:
+                  oneOf:
+                    - $ref: "#/components/schemas/RateWindow"
+                    - type: "null"
+                day:
+                  oneOf:
+                    - $ref: "#/components/schemas/RateWindow"
+                    - type: "null"
+            warmup:
+              oneOf:
+                - $ref: "#/components/schemas/Warmup"
+                - type: "null"
+            outbox:
+              oneOf:
+                - $ref: "#/components/schemas/OutboxSummary"
+                - type: "null"
+            followUp:
+              oneOf:
+                - $ref: "#/components/schemas/FollowUpSummary"
+                - type: "null"
+            capabilities:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/CapabilityState"
+            recentEvents:
+              type: array
+              items:
+                $ref: "#/components/schemas/OperationalEvent"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [readyToSend, blockers, database, eventStream]
+      properties:
+        readyToSend:
+          type: boolean
+        blockers:
+          type: array
+          items:
+            type: string
+        database:
+          $ref: "#/components/schemas/ServiceState"
+        eventStream:
+          $ref: "#/components/schemas/ServiceState"
+
+    SessionSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - connectedSince
+        - lastDisconnect
+        - reconnect
+        - browser
+        - credentialUpdatedAt
+      properties:
+        state:
+          $ref: "#/components/schemas/SessionState"
+        connectedSince:
+          type: [string, "null"]
+          format: date-time
+        lastDisconnect:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [reason, classification, occurredAt]
+              properties:
+                code:
+                  type: integer
+                reason:
+                  type: string
+                classification:
+                  type: string
+                  enum: [recoverable, logged_out, bad_session, unknown]
+                occurredAt:
+                  type: string
+                  format: date-time
+        reconnect:
+          type: object
+          additionalProperties: false
+          required: [attempt, nextRetryAt, eligible, disabledReason]
+          properties:
+            attempt:
+              type: integer
+              minimum: 0
+            nextRetryAt:
+              type: [string, "null"]
+              format: date-time
+            eligible:
+              type: boolean
+            disabledReason:
+              type: [string, "null"]
+        browser:
+          type: object
+          additionalProperties: false
+          required: [platform, name]
+          properties:
+            platform:
+              type: string
+            name:
+              type: string
+        credentialUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+
+    OperationalEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, severity, occurredAt, data]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        occurredAt:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+
+    SafetySnapshot:
+      type: object
+      additionalProperties: false
+      required: [risk, score, paused, reasons, recommendation]
+      properties:
+        risk:
+          $ref: "#/components/schemas/Risk"
+        score:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+        paused:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        recommendation:
+          type: string
+
+    Warmup:
+      type: object
+      additionalProperties: false
+      required: [day, totalDays, sentToday, limitToday, progressRatio]
+      properties:
+        day:
+          type: integer
+          minimum: 1
+        totalDays:
+          type: integer
+          minimum: 1
+        sentToday:
+          type: integer
+          minimum: 0
+        limitToday:
+          type: integer
+        progressRatio:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OutboxSummary:
+      type: object
+      additionalProperties: false
+      required: [queued, retrying, failed, oldestAgeMs]
+      properties:
+        queued:
+          type: integer
+          minimum: 0
+        retrying:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        oldestAgeMs:
+          type: number
+          minimum: 0
+
+    FollowUpSummary:
+      type: object
+      additionalProperties: false
+      required: [open, unassigned, overdue]
+      properties:
+        open:
+          type: integer
+          minimum: 0
+        unassigned:
+          type: integer
+          minimum: 0
+        overdue:
+          type: integer
+          minimum: 0
+
+    CreateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [recipient, message]
+      properties:
+        recipient:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            contactId:
+              type: string
+            phone:
+              type: string
+              minLength: 10
+              maxLength: 32
+        message:
+          type: object
+          additionalProperties: false
+          required: [type, text]
+          properties:
+            type:
+              const: text
+            text:
+              type: string
+              minLength: 1
+              maxLength: 4096
+        priority:
+          type: string
+          enum: [high, normal, low]
+          default: normal
+        scheduledAt:
+          type: [string, "null"]
+          format: date-time
+
+    CreateMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, state]
+          properties:
+            id:
+              type: string
+              format: uuid
+            state:
+              const: accepted
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, direction, messageType, content, state, createdAt]
+      properties:
+        id:
+          type: string
+        direction:
+          type: string
+          enum: [incoming, outgoing]
+        messageType:
+          type: string
+        content:
+          type: [string, "null"]
+        state:
+          type: string
+          enum:
+            - accepted
+            - queued
+            - scheduled
+            - safety_delayed
+            - sending
+            - sent
+            - delivered
+            - read
+            - retrying
+            - failed
+            - canceled
+            - unknown_outcome
+            - received
+        providerMessageId:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    MessageEvent:
+      type: object
+      additionalProperties: false
+      required: [id, eventType, occurredAt]
+      properties:
+        id:
+          type: string
+        eventType:
+          type: string
+        reasonCode:
+          type: [string, "null"]
+        occurredAt:
+          type: string
+          format: date-time
+
+    MessageDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [message, events]
+          properties:
+            message:
+              $ref: "#/components/schemas/Message"
+            events:
+              type: array
+              items:
+                $ref: "#/components/schemas/MessageEvent"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    MessageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        meta:
+          $ref: "#/components/schemas/CursorMeta"
+
+    ConversationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - displayName
+        - maskedPhone
+        - identityStatus
+        - lastMessage
+        - lastOutgoingStatus
+        - counts
+      properties:
+        id:
+          type: string
+        displayName:
+          type: [string, "null"]
+        maskedPhone:
+          type: [string, "null"]
+        identityStatus:
+          type: string
+          enum: [resolved, unresolved, conflict]
+        lastMessage:
+          type: object
+          additionalProperties: false
+          required: [id, preview, direction, messageType, occurredAt]
+          properties:
+            id:
+              type: string
+            preview:
+              type: string
+            direction:
+              type: string
+              enum: [incoming, outgoing]
+            messageType:
+              type: string
+            occurredAt:
+              type: string
+              format: date-time
+        lastOutgoingStatus:
+          type: [string, "null"]
+        counts:
+          $ref: "#/components/schemas/MessageCounts"
+
+    ConversationListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationSummary"
+        meta:
+          $ref: "#/components/schemas/CursorMeta"
+
+    Handoff:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - contactId
+        - sourceMessageId
+        - state
+        - assigneeUserId
+        - dueAt
+        - resolvedAt
+        - resolutionNote
+        - createdAt
+        - updatedAt
+        - contact
+        - sourcePreview
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+        sourceMessageId:
+          type: string
+        state:
+          type: string
+          enum: [open, assigned, resolved, canceled]
+        assigneeUserId:
+          type: [string, "null"]
+          format: uuid
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+        resolutionNote:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        contact:
+          type: object
+          additionalProperties: false
+          required: [displayName, maskedPhone]
+          properties:
+            displayName:
+              type: [string, "null"]
+            maskedPhone:
+              type: [string, "null"]
+        sourcePreview:
+          type: string
+
+    MessageCounts:
+      type: object
+      additionalProperties: false
+      required: [incoming, outgoing]
+      properties:
+        incoming:
+          type: integer
+          minimum: 0
+        outgoing:
+          type: integer
+          minimum: 0
+
+    Contact:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - displayName
+        - maskedPhone
+        - identity
+        - counts
+        - lastOutgoingStatus
+        - lastInteractionAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        displayName:
+          type: [string, "null"]
+        maskedPhone:
+          type: [string, "null"]
+        identity:
+          type: object
+          additionalProperties: false
+          required: [status, whatsappJid, pnJid, lidJid, canonicalJid]
+          properties:
+            status:
+              type: string
+              enum: [resolved, unresolved, conflict]
+            whatsappJid:
+              type: [string, "null"]
+            pnJid:
+              type: [string, "null"]
+            lidJid:
+              type: [string, "null"]
+            canonicalJid:
+              type: [string, "null"]
+        counts:
+          $ref: "#/components/schemas/MessageCounts"
+        lastOutgoingStatus:
+          type: [string, "null"]
+        lastInteractionAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContactResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Contact"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ContactListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Contact"
+        meta:
+          $ref: "#/components/schemas/CursorMeta"
+
+    HandoffResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Handoff"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    HandoffListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Handoff"
+        meta:
+          $ref: "#/components/schemas/CursorMeta"
+
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [session, readiness]
+          properties:
+            session:
+              $ref: "#/components/schemas/SessionSnapshot"
+            readiness:
+              $ref: "#/components/schemas/Readiness"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    QrResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [qr, expiresAt]
+          properties:
+            qr:
+              type: string
+              writeOnly: true
+            expiresAt:
+              type: string
+              format: date-time
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    SafetyResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [effectivePaused, manualPaused, snapshot, capabilities]
+          properties:
+            effectivePaused:
+              type: boolean
+            manualPaused:
+              type: boolean
+            snapshot:
+              $ref: "#/components/schemas/SafetySnapshot"
+            capabilities:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/CapabilityState"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500

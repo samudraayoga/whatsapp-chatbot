@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  control-panel:
+    name: Control panel
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: whatsapp-control-panel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: whatsapp-control-panel/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Check
+        run: npm run check
+
+  chatbot-backend:
+    name: Chatbot backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: simple-whatsapp-chatbot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: simple-whatsapp-chatbot/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Check
+        run: npm run check
+
+  antiban-contract:
+    name: Anti-ban official check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: baileys-antiban
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: baileys-antiban/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Type-check and official manual test
+        run: npm run test:check

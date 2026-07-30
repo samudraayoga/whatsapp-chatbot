@@ -1,0 +1,12 @@
+process.env.NODE_ENV = 'test';
+process.env.POSTGRES_HOST = 'localhost';
+process.env.POSTGRES_PORT = '5432';
+process.env.POSTGRES_DB = 'chatbot_test';
+process.env.POSTGRES_USER = 'chatbot_test';
+process.env.POSTGRES_PASSWORD = 'not-used-by-unit-tests';
+process.env.API_KEY = 'test-api-key';
+process.env.WA_AUTH_PATH = './auth-test';
+process.env.ADMIN_BOOTSTRAP_USERNAME = 'admin';
+process.env.ADMIN_BOOTSTRAP_PASSWORD = 'admin123';
+process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME = 'Test Admin';
+process.env.ADMIN_SESSION_TTL_HOURS = '8';
