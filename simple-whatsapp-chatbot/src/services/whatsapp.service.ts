@@ -2,6 +2,7 @@ import { Boom } from '@hapi/boom';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  fetchLatestBaileysVersion,
   useMultiFileAuthState,
   type ConnectionState,
   type WAMessage
@@ -77,7 +78,7 @@ export type SendingBlock = {
 
 const baileysLogger = P({ level: 'silent' });
 type ProtectedWASocket = ReturnType<typeof makeWASocket> & { antiban: AntiBan };
-export const PAIRING_QR_TTL_MS = 60_000;
+export const PAIRING_QR_TTL_MS = 10_000;
 
 export class ReconnectNotAllowedError extends Error {
   constructor(readonly reason: string) {
@@ -309,6 +310,7 @@ export class WhatsAppService {
 
   private async startSocket(): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(path.resolve(env.WA_AUTH_PATH));
+    const { version, isLatest } = await fetchLatestBaileysVersion();
 
     this.cleanupSocketListeners();
     this.status = 'connecting';
@@ -322,7 +324,13 @@ export class WhatsAppService {
       auth: state,
       browser: Browsers.ubuntu('Simple WhatsApp Chatbot'),
       logger: baileysLogger,
-      markOnlineOnConnect: false
+      markOnlineOnConnect: false,
+      version
+    });
+
+    logger.info('WhatsApp protocol version resolved', {
+      version: version.join('.'),
+      isLatest
     });
 
     const socket = wrapSocket(

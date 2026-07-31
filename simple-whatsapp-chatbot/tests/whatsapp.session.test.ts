@@ -31,6 +31,10 @@ describe('WhatsApp rich session lifecycle', () => {
     vi.useRealTimers();
   });
 
+  it('expires each pairing QR after ten seconds', () => {
+    expect(PAIRING_QR_TTL_MS).toBe(10_000);
+  });
+
   it('keeps the pairing QR in memory, expires it, and never publishes its value', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-30T03:00:00.000Z'));
