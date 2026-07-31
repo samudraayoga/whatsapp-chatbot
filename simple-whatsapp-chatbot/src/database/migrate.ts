@@ -38,6 +38,24 @@ export const runMigrations = async (): Promise<void> => {
 
     await client.query(`
       ALTER TABLE contacts
+        ADD COLUMN IF NOT EXISTS first_incoming_at TIMESTAMPTZ;
+    `);
+
+    await client.query(`
+      UPDATE contacts AS contact
+      SET first_incoming_at = first_message.created_at
+      FROM (
+        SELECT contact_id, MIN(created_at) AS created_at
+        FROM messages
+        WHERE direction = 'incoming'
+        GROUP BY contact_id
+      ) AS first_message
+      WHERE contact.id = first_message.contact_id
+        AND contact.first_incoming_at IS NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE contacts
         ADD COLUMN IF NOT EXISTS pn_jid VARCHAR,
         ADD COLUMN IF NOT EXISTS lid_jid VARCHAR,
         ADD COLUMN IF NOT EXISTS canonical_jid VARCHAR,

@@ -27,6 +27,13 @@ type SaveMessageInput = {
   createHandoff?: boolean;
 };
 
+type ApplyChatbotEvaluationInput = {
+  whatsappMessageId: string;
+  chatbotVersionId: string;
+  chatbotRuleId: string;
+  createHandoff?: boolean;
+};
+
 export class MessageService {
   constructor(private readonly database: QueryExecutor = pool) {}
 
@@ -81,7 +88,9 @@ export class MessageService {
     };
   }
 
-  async saveMessage(input: SaveMessageInput): Promise<{ inserted: boolean }> {
+  async saveMessage(
+    input: SaveMessageInput
+  ): Promise<{ inserted: boolean; isFirstIncoming: boolean }> {
     const contact = await this.upsertContact({
       whatsappJid: input.whatsappJid,
       displayName: input.displayName
@@ -114,6 +123,21 @@ export class MessageService {
     );
 
     const inserted = (result.rowCount ?? 0) > 0;
+    let isFirstIncoming = false;
+
+    if (input.direction === 'incoming' && inserted) {
+      const firstIncoming = await this.database.query<{ id: string }>(
+        `
+          UPDATE contacts
+          SET first_incoming_at = NOW()
+          WHERE id = $1
+            AND first_incoming_at IS NULL
+          RETURNING id;
+        `,
+        [contact.id]
+      );
+      isFirstIncoming = (firstIncoming.rowCount ?? 0) > 0;
+    }
 
     if (input.direction === 'incoming' && input.createHandoff) {
       let sourceMessageId = result.rows[0]?.id;
@@ -148,6 +172,46 @@ export class MessageService {
       }
     }
 
-    return { inserted };
+    return { inserted, isFirstIncoming };
+  }
+
+  async applyChatbotEvaluation(input: ApplyChatbotEvaluationInput): Promise<void> {
+    const message = await this.database.query<{
+      id: string;
+      contact_id: string;
+    }>(
+      `
+        UPDATE messages
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+        WHERE whatsapp_message_id = $1
+          AND direction = 'incoming'
+        RETURNING id::text, contact_id::text;
+      `,
+      [
+        input.whatsappMessageId,
+        JSON.stringify({
+          chatbotVersionId: input.chatbotVersionId,
+          chatbotRuleId: input.chatbotRuleId
+        })
+      ]
+    );
+
+    if (!input.createHandoff || !message.rows[0]) {
+      return;
+    }
+
+    await this.database.query(
+      `
+        INSERT INTO handoff_tasks (
+          id,
+          contact_id,
+          source_message_id,
+          due_at
+        )
+        VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
+        ON CONFLICT (source_message_id) DO NOTHING;
+      `,
+      [randomUUID(), message.rows[0].contact_id, message.rows[0].id]
+    );
   }
 }

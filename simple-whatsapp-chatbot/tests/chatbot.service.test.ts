@@ -18,9 +18,9 @@ describe('Versioned chatbot rule engine', () => {
     (input) => {
       const result = matchChatbotRule(rules, input);
       expect(result.rule.responseText).toContain(
-        '1. Tentang Raho Club Premier'
+        '1. Tentang RAHO'
       );
-      expect(result.rule.responseText).toContain('5. Hubungi Admin');
+      expect(result.rule.responseText).toContain('0. Hubungi Admin');
     }
   );
 
@@ -29,22 +29,40 @@ describe('Versioned chatbot rule engine', () => {
   });
 
   it.each([
-    ['1', 'layanan kesehatan'],
-    ['2', 'program kesehatan'],
-    ['3', 'lokasi layanan'],
-    ['4', 'melakukan reservasi'],
-    ['5', 'Admin Raho Club Premier']
+    ['1', 'komunitas kesehatan'],
+    ['2', 'Nano Bubble Therapy'],
+    ['3', 'Paket 7 sesi'],
+    ['4', 'nama kota atau area'],
+    ['5', 'Keamanan member'],
+    ['6', 'gelembung gas'],
+    ['7', 'evaluasi dokter'],
+    ['8', 'membuat janji'],
+    ['9', 'program terapi'],
+    ['10', 'Informasi karier'],
+    ['0', 'diteruskan kepada Admin RAHO']
   ])('matches numeric menu %s', (input, expected) => {
     expect(matchChatbotRule(rules, input).rule.responseText).toContain(expected);
   });
 
-  it('marks menu 5 as a durable handoff action', () => {
-    expect(matchChatbotRule(rules, '5').rule.action).toBe('create_handoff');
+  it.each(['0', '4', '8', 'jadwal dokter'])(
+    'marks conversion intent %j as a durable handoff action',
+    (input) => {
+      expect(matchChatbotRule(rules, input).rule.action).toBe('create_handoff');
+    }
+  );
+
+  it.each([
+    ['berapa harga terapi di raho club', 'Rp12.500.000'],
+    ['apakah terapi raho sudah diteliti', 'supportive therapy'],
+    ['apakah terapi ini bisa untuk lansia', 'evaluasi dokter'],
+    ['apa itu igds', 'menyesuaikan proses penghantaran']
+  ])('answers Google Search intent %j', (input, expected) => {
+    expect(matchChatbotRule(rules, input).rule.responseText).toContain(expected);
   });
 
   it('uses the fallback for unsupported input', () => {
     expect(matchChatbotRule(rules, 'tidak ada').rule.responseText).toContain(
-      'belum tersedia'
+      'belum menemukan jawaban'
     );
   });
 

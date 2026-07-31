@@ -33,9 +33,22 @@ const versionTone = (status: 'draft' | 'published' | 'archived') =>
 
 const localProblems = (rules: ChatbotRule[]) => {
   const problems: string[] = [];
+  if (rules.length < 1 || rules.length > 100) {
+    problems.push('Jumlah rule harus antara 1 dan 100.');
+  }
   const priorities = rules.map((rule) => rule.priority);
   if (new Set(priorities).size !== priorities.length) {
     problems.push('Priority harus unik.');
+  }
+  if (
+    rules.some(
+      (rule) =>
+        !Number.isInteger(rule.priority) ||
+        rule.priority < 0 ||
+        rule.priority > 9999
+    )
+  ) {
+    problems.push('Priority harus berupa angka bulat antara 0 dan 9999.');
   }
   if (rules.filter((rule) => rule.enabled && rule.triggerType === 'empty').length !== 1) {
     problems.push('Harus ada tepat satu empty rule aktif.');
@@ -45,6 +58,33 @@ const localProblems = (rules: ChatbotRule[]) => {
   }
   if (rules.some((rule) => !rule.responseText.trim())) {
     problems.push('Semua response wajib diisi.');
+  }
+  if (
+    rules.some(
+      (rule) =>
+        ['exact', 'alias'].includes(rule.triggerType) &&
+        !rule.triggerValues.some((value) => value.trim())
+    )
+  ) {
+    problems.push('Rule exact dan alias wajib memiliki minimal satu trigger.');
+  }
+  if (
+    rules.some(
+      (rule) =>
+        ['empty', 'fallback'].includes(rule.triggerType) &&
+        rule.triggerValues.some((value) => value.trim())
+    )
+  ) {
+    problems.push('Rule empty dan fallback tidak boleh memiliki trigger.');
+  }
+  if (
+    rules.some(
+      (rule) =>
+        rule.triggerValues.length > 20 ||
+        rule.triggerValues.some((value) => value.trim().length > 100)
+    )
+  ) {
+    problems.push('Maksimal 20 trigger per rule dan 100 karakter per trigger.');
   }
   const triggers = rules
     .filter((rule) => rule.enabled)
@@ -58,10 +98,29 @@ const localProblems = (rules: ChatbotRule[]) => {
   return problems;
 };
 
+const nextAvailablePriority = (rules: ChatbotRule[]) => {
+  const used = new Set(rules.map((rule) => rule.priority));
+  const normalPriorities = rules
+    .filter((rule) => ['exact', 'alias'].includes(rule.triggerType))
+    .map((rule) => rule.priority);
+  const preferredStart = Math.max(0, ...normalPriorities) + 10;
+
+  for (let priority = preferredStart; priority <= 9999; priority += 10) {
+    if (!used.has(priority)) return priority;
+  }
+  for (let priority = 0; priority <= 9999; priority += 1) {
+    if (!used.has(priority)) return priority;
+  }
+  return 9999;
+};
+
 type WorkspaceProps = {
   detail: ChatbotVersionDetailResponse;
   activeDetail?: ChatbotVersionDetailResponse;
   activeVersionId: string;
+  editableDraftExists: boolean;
+  isCreatingDraft: boolean;
+  startEditing: () => void;
   refresh: () => Promise<void>;
 };
 
@@ -69,6 +128,9 @@ const ChatbotWorkspace = ({
   detail,
   activeDetail,
   activeVersionId,
+  editableDraftExists,
+  isCreatingDraft,
+  startEditing,
   refresh
 }: WorkspaceProps) => {
   const queryClient = useQueryClient();
@@ -78,6 +140,9 @@ const ChatbotWorkspace = ({
   const [publishConfirmation, setPublishConfirmation] = useState('');
   const [rollbackReason, setRollbackReason] = useState('');
   const [rollbackConfirmation, setRollbackConfirmation] = useState('');
+  const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(
+    null
+  );
   const version = detail.data.version;
   const problems = useMemo(() => localProblems(rules), [rules]);
   const dirty = JSON.stringify(rules) !== JSON.stringify(detail.data.rules);
@@ -139,6 +204,31 @@ const ChatbotWorkspace = ({
       )
     );
 
+  const addRule = () => {
+    setRules((current) => {
+      const next = [
+        ...current,
+        {
+          triggerType: 'exact' as const,
+          triggerValues: [''],
+          responseText: '',
+          priority: nextAvailablePriority(current),
+          enabled: true,
+          action: 'reply' as const
+        }
+      ];
+      return next.sort((left, right) => left.priority - right.priority);
+    });
+    setPendingDeleteIndex(null);
+  };
+
+  const deleteRule = (index: number) => {
+    setRules((current) =>
+      current.filter((_, ruleIndex) => ruleIndex !== index)
+    );
+    setPendingDeleteIndex(null);
+  };
+
   return (
     <div className="chatbot-workspace">
       <section className="panel chatbot-editor">
@@ -163,23 +253,22 @@ const ChatbotWorkspace = ({
             </span>
             <button
               className="button"
+              disabled={rules.length >= 100}
               type="button"
-              onClick={() =>
-                setRules((current) => [
-                  ...current,
-                  {
-                    triggerType: 'exact',
-                    triggerValues: [''],
-                    responseText: '',
-                    priority:
-                      Math.max(0, ...current.map((rule) => rule.priority)) + 10,
-                    enabled: true,
-                    action: 'reply'
-                  }
-                ])
-              }
+              onClick={addRule}
             >
               Tambah rule
+            </button>
+            <button
+              className="button"
+              disabled={!dirty || saveMutation.isPending}
+              type="button"
+              onClick={() => {
+                setRules(detail.data.rules);
+                setPendingDeleteIndex(null);
+              }}
+            >
+              Batalkan perubahan
             </button>
             <button
               className="button button--primary"
@@ -190,6 +279,31 @@ const ChatbotWorkspace = ({
               onClick={() => saveMutation.mutate()}
             >
               {saveMutation.isPending ? 'Menyimpan…' : 'Simpan draft'}
+            </button>
+          </div>
+        )}
+
+        {version.status !== 'draft' && (
+          <div className="editor-readonly">
+            <div>
+              <strong>Versi ini hanya-baca</strong>
+              <span>
+                {editableDraftExists
+                  ? 'Buka draft yang tersedia untuk menambah, mengubah, atau menghapus rule.'
+                  : 'Mulai pengelolaan untuk membuat draft aman dari versi aktif ini.'}
+              </span>
+            </div>
+            <button
+              className="button button--primary"
+              disabled={isCreatingDraft}
+              type="button"
+              onClick={startEditing}
+            >
+              {isCreatingDraft
+                ? 'Menyiapkan draft…'
+                : editableDraftExists
+                  ? 'Buka draft rules'
+                  : 'Kelola rules'}
             </button>
           </div>
         )}
@@ -210,8 +324,20 @@ const ChatbotWorkspace = ({
         <div className="rule-list">
           {rules.map((rule, index) => (
             <article className="rule-card" key={rule.id ?? `new-${index}`}>
-              <div className="rule-card__meta">
+              <div className="rule-card__heading">
                 <strong>Rule {index + 1}</strong>
+                {version.status === 'draft' && (
+                  <button
+                    aria-label={`Hapus rule ${index + 1}`}
+                    className="rule-card__delete"
+                    type="button"
+                    onClick={() => setPendingDeleteIndex(index)}
+                  >
+                    Hapus
+                  </button>
+                )}
+              </div>
+              <div className="rule-card__meta">
                 <label>
                   Priority
                   <input
@@ -304,18 +430,29 @@ const ChatbotWorkspace = ({
                   }
                 />
               </label>
-              {version.status === 'draft' && (
-                <button
-                  className="rule-card__delete"
-                  type="button"
-                  onClick={() =>
-                    setRules((current) =>
-                      current.filter((_, ruleIndex) => ruleIndex !== index)
-                    )
-                  }
-                >
-                  Hapus rule
-                </button>
+              {pendingDeleteIndex === index && (
+                <div className="rule-card__delete-confirm" role="alert">
+                  <span>
+                    Hapus Rule {index + 1} dari draft? Perubahan baru permanen
+                    setelah draft disimpan.
+                  </span>
+                  <div>
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => setPendingDeleteIndex(null)}
+                    >
+                      Batal
+                    </button>
+                    <button
+                      className="button button--danger"
+                      type="button"
+                      onClick={() => deleteRule(index)}
+                    >
+                      Ya, hapus rule
+                    </button>
+                  </div>
+                </div>
               )}
             </article>
           ))}
@@ -480,6 +617,9 @@ export const ChatbotRulesPage = () => {
   const active = versions.data?.data.find(
     (version) => version.status === 'published'
   );
+  const editableDraft = versions.data?.data.find(
+    (version) => version.status === 'draft'
+  );
   const selectedId =
     selectedVersionId ?? active?.id ?? versions.data?.data[0]?.id ?? null;
   const detail = useQuery({
@@ -500,6 +640,13 @@ export const ChatbotRulesPage = () => {
       await queryClient.invalidateQueries({ queryKey: ['chatbot'] });
     }
   });
+  const startEditing = () => {
+    if (editableDraft) {
+      setSelectedVersionId(editableDraft.id);
+      return;
+    }
+    createMutation.mutate();
+  };
 
   if (versions.isPending) {
     return <section className="page-state">Memuat chatbot rules…</section>;
@@ -587,7 +734,10 @@ export const ChatbotRulesPage = () => {
             }
             activeVersionId={active.id}
             detail={detail.data}
+            editableDraftExists={Boolean(editableDraft)}
+            isCreatingDraft={createMutation.isPending}
             key={`${detail.data.data.version.id}:${detail.data.data.version.revision}:${detail.data.data.version.status}`}
+            startEditing={startEditing}
             refresh={async () => {
               await versions.refetch();
               await detail.refetch();

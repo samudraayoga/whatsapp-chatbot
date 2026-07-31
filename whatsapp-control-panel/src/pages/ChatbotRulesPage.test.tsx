@@ -83,6 +83,88 @@ const renderPage = () => {
 };
 
 describe('Sprint 5 chatbot rule management', () => {
+  it('creates and opens an editable draft from the published version', async () => {
+    const user = userEvent.setup();
+    const active = makeDetail(activeId, 'published', 1);
+    const draft = makeDetail(draftId, 'draft', 2);
+    let draftCreated = false;
+
+    server.use(
+      http.get('*/api/admin/v1/chatbot/versions', () =>
+        HttpResponse.json({
+          data: draftCreated
+            ? [draft.version, active.version]
+            : [active.version],
+          meta
+        })
+      ),
+      http.get('*/api/admin/v1/chatbot/versions/:versionId', ({ params }) =>
+        HttpResponse.json({
+          data: params.versionId === draftId ? draft : active,
+          meta
+        })
+      ),
+      http.post('*/api/admin/v1/chatbot/versions/drafts', () => {
+        draftCreated = true;
+        return HttpResponse.json({ data: draft, meta }, { status: 201 });
+      })
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByRole('heading', { name: 'Initial rules' })
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Kelola rules' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Draft changes' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Tambah rule' })
+    ).toBeInTheDocument();
+  });
+
+  it('adds and removes a rule locally with delete confirmation', async () => {
+    const user = userEvent.setup();
+    const active = makeDetail(activeId, 'published', 1);
+    const draft = makeDetail(draftId, 'draft', 2);
+
+    server.use(
+      http.get('*/api/admin/v1/chatbot/versions', () =>
+        HttpResponse.json({ data: [draft.version, active.version], meta })
+      ),
+      http.get('*/api/admin/v1/chatbot/versions/:versionId', ({ params }) =>
+        HttpResponse.json({
+          data: params.versionId === draftId ? draft : active,
+          meta
+        })
+      )
+    );
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /v2/i }));
+    await screen.findByRole('heading', { name: 'Draft changes' });
+
+    expect(
+      screen.getAllByRole('button', { name: /Hapus rule \d+/ })
+    ).toHaveLength(3);
+    await user.click(screen.getByRole('button', { name: 'Tambah rule' }));
+    expect(
+      screen.getAllByRole('button', { name: /Hapus rule \d+/ })
+    ).toHaveLength(4);
+
+    await user.click(screen.getByRole('button', { name: 'Hapus rule 3' }));
+    expect(
+      screen.getByText(/Perubahan baru permanen setelah draft disimpan/)
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Ya, hapus rule' }));
+
+    expect(
+      screen.getAllByRole('button', { name: /Hapus rule \d+/ })
+    ).toHaveLength(3);
+  });
+
   it('edits a draft, saves it, and dry-runs normalized input without sending', async () => {
     const user = userEvent.setup();
     const active = makeDetail(activeId, 'published', 1);

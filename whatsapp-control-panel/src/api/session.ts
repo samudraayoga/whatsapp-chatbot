@@ -35,6 +35,23 @@ export const reconnectSession = async (): Promise<SessionResponse> => {
   );
 };
 
+export const resetWhatsAppSession = async (input: {
+  reason: string;
+  currentPassword: string;
+  confirmation: string;
+}): Promise<SessionResponse> => {
+  return sessionResponseSchema.parse(
+    await requestJson('/api/admin/v1/session/reset', {
+      method: 'POST',
+      headers: {
+        ...csrfHeaders(),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(input)
+    })
+  );
+};
+
 export const pauseSending = async (): Promise<SafetyCenterResponse> => {
   return safetyCenterResponseSchema.parse(
     await requestJson('/api/admin/v1/safety/pause', {

@@ -6,17 +6,32 @@ import {
 } from '../services/audit.service.js';
 import { OperationalEventService } from '../services/operational-event.service.js';
 import { OverviewService } from '../services/overview.service.js';
+import { AdminAuthService } from '../services/admin-auth.service.js';
 import {
+  CredentialResetNotAllowedError,
   ReconnectNotAllowedError,
   WhatsAppService
 } from '../services/whatsapp.service.js';
+
+const parseResetReason = (value: unknown): string => {
+  const reason = typeof value === 'string' ? value.trim() : '';
+  if (reason.length < 5 || reason.length > 500) {
+    throw new AppError(
+      'Reason must contain 5 to 500 characters',
+      400,
+      'SESSION_RESET_REASON_INVALID'
+    );
+  }
+  return reason;
+};
 
 export class AdminSessionController {
   constructor(
     private readonly whatsappService: WhatsAppService,
     private readonly overviewService: OverviewService,
     private readonly auditService: AuditService,
-    private readonly operationalEvents: OperationalEventService
+    private readonly operationalEvents: OperationalEventService,
+    private readonly authService: AdminAuthService
   ) {}
 
   getSession = async (
@@ -115,6 +130,89 @@ export class AdminSessionController {
             'Reconnect is not allowed in the current session state',
             409,
             'RECONNECT_NOT_ALLOWED',
+            { reason: error.reason, state: before.state }
+          )
+        );
+        return;
+      }
+      next(error);
+    }
+  };
+
+  resetCredentials = async (
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    const before = this.whatsappService.getOperationalStatus();
+
+    try {
+      const reason = parseResetReason(request.body?.reason);
+      if (request.body?.confirmation !== 'RESET_WHATSAPP_SESSION') {
+        throw new AppError(
+          'Type RESET_WHATSAPP_SESSION to confirm',
+          400,
+          'SESSION_RESET_CONFIRMATION_REQUIRED'
+        );
+      }
+      const currentPassword =
+        typeof request.body?.currentPassword === 'string'
+          ? request.body.currentPassword
+          : '';
+      if (
+        !(await this.authService.verifyUserPassword(
+          request.adminAuth!.id,
+          currentPassword
+        ))
+      ) {
+        throw new AppError(
+          'Step-up authentication failed',
+          403,
+          'STEP_UP_AUTHENTICATION_FAILED'
+        );
+      }
+
+      await this.auditService.record({
+        actorUserId: request.adminAuth!.id,
+        action: 'session.auth_reset_requested',
+        resourceType: 'whatsapp_session',
+        reason,
+        beforeState: before,
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
+      await this.whatsappService.resetCredentials();
+      const overview = await this.overviewService.getOverview();
+      await recordAuditOutcome(this.auditService, {
+        actorUserId: request.adminAuth!.id,
+        action: 'session.auth_reset',
+        resourceType: 'whatsapp_session',
+        reason,
+        beforeState: before,
+        afterState: overview.session,
+        requestId: request.requestId,
+        ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
+
+      response.status(202).json({
+        data: {
+          session: overview.session,
+          readiness: overview.readiness
+        },
+        meta: {
+          requestId: request.requestId,
+          generatedAt: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      if (error instanceof CredentialResetNotAllowedError) {
+        next(
+          new AppError(
+            'Credential reset is not allowed in the current session state',
+            409,
+            'SESSION_RESET_NOT_ALLOWED',
             { reason: error.reason, state: before.state }
           )
         );

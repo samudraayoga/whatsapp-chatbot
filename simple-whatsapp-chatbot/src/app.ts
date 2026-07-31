@@ -89,7 +89,8 @@ export const createApp = ({
     whatsappService,
     resolvedOverviewService,
     resolvedAuditService,
-    resolvedOperationalEventService
+    resolvedOperationalEventService,
+    resolvedAuthService
   );
   const resolvedSafetyCenterService =
     safetyCenterService ??

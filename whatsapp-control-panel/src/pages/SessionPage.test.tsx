@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { AdminUser } from '../api/contracts';
@@ -14,6 +14,20 @@ const operator: AdminUser = {
   displayName: 'Operations User',
   role: 'operator',
   permissions: ['dashboard.read', 'session.reconnect', 'safety.pause']
+};
+
+const admin: AdminUser = {
+  ...operator,
+  id: 'admin-id',
+  username: 'admin',
+  displayName: 'Admin User',
+  role: 'admin',
+  permissions: [
+    'dashboard.read',
+    'session.reconnect',
+    'session.reset',
+    'safety.pause'
+  ]
 };
 
 const renderPage = (user: AdminUser = operator) => {
@@ -133,6 +147,86 @@ describe('SessionPage', () => {
         'WhatsApp menolak koneksi secara terminal; reconnect session tidak tersedia'
       )
     ).toBeInTheDocument();
+  });
+
+  it('lets an Admin reset rejected credentials and request a new QR', async () => {
+    const user = userEvent.setup();
+    const loggedOutSession = {
+      ...disconnectedOverview.data.session,
+      state: 'logged_out' as const,
+      lastDisconnect: {
+        code: 401,
+        reason: 'Connection Failure',
+        classification: 'logged_out' as const,
+        occurredAt: '2026-07-31T07:05:29.005Z'
+      },
+      reconnect: {
+        attempt: 0,
+        nextRetryAt: null,
+        eligible: false,
+        disabledReason: 'auth_reset_required'
+      }
+    };
+    let resetBody: Record<string, unknown> | null = null;
+
+    server.use(
+      http.get('*/api/admin/v1/session', () =>
+        HttpResponse.json({
+          data: {
+            session: loggedOutSession,
+            readiness: disconnectedOverview.data.readiness
+          },
+          meta: disconnectedOverview.meta
+        })
+      ),
+      http.post('*/api/admin/v1/session/reset', async ({ request }) => {
+        resetBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          {
+            data: {
+              session: {
+                ...loggedOutSession,
+                state: 'connecting',
+                lastDisconnect: null
+              },
+              readiness: disconnectedOverview.data.readiness
+            },
+            meta: disconnectedOverview.meta
+          },
+          { status: 202 }
+        );
+      })
+    );
+
+    renderPage(admin);
+    await user.click(
+      await screen.findByRole('button', { name: 'Reset & generate QR' })
+    );
+    await user.type(
+      screen.getByLabelText('Alasan reset'),
+      'Credential ditolak WhatsApp'
+    );
+    await user.type(screen.getByLabelText('Password Admin'), 'admin123');
+    await user.type(
+      screen.getByLabelText('Ketik RESET_WHATSAPP_SESSION'),
+      'RESET_WHATSAPP_SESSION'
+    );
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Reset credential & generate QR'
+      })
+    );
+
+    await waitFor(() =>
+      expect(resetBody).toEqual({
+        reason: 'Credential ditolak WhatsApp',
+        currentPassword: 'admin123',
+        confirmation: 'RESET_WHATSAPP_SESSION'
+      })
+    );
+    expect(
+      screen.queryByRole('heading', { name: 'Reset dan buat QR baru' })
+    ).not.toBeInTheDocument();
   });
 
   it('requires confirmation before applying emergency pause', async () => {

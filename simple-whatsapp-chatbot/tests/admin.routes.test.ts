@@ -135,6 +135,7 @@ const createTestApp = (options: {
       if (options.reconnectError) throw options.reconnectError;
       return overview.session;
     }),
+    resetCredentials: vi.fn(async () => overview.session),
     pauseSending: vi.fn(),
     isSendingPaused: vi.fn(() => true)
   } as unknown as WhatsAppService;
@@ -613,8 +614,22 @@ describe('Admin API authentication and safety boundary', () => {
       ])
       .set('X-CSRF-Token', 'csrf-token')
       .expect(403);
+    await request(app)
+      .post('/api/admin/v1/session/reset')
+      .set('Cookie', [
+        'admin_session=session-token',
+        'admin_csrf=csrf-token'
+      ])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({
+        reason: 'Credential ditolak WhatsApp',
+        currentPassword: 'admin123',
+        confirmation: 'RESET_WHATSAPP_SESSION'
+      })
+      .expect(403);
 
     expect(whatsappService.requestReconnect).not.toHaveBeenCalled();
+    expect(whatsappService.resetCredentials).not.toHaveBeenCalled();
   });
 
   it('accepts a CSRF-protected reconnect and writes its audit event', async () => {
@@ -652,6 +667,82 @@ describe('Admin API authentication and safety boundary', () => {
       code: 'RECONNECT_NOT_ALLOWED',
       details: { reason: 'already_connected' }
     });
+  });
+
+  it('resets rejected WhatsApp credentials with step-up authentication and audit', async () => {
+    const {
+      app,
+      adminAuthService,
+      auditService,
+      whatsappService
+    } = createTestApp();
+    const response = await request(app)
+      .post('/api/admin/v1/session/reset')
+      .set('Cookie', [
+        'admin_session=session-token',
+        'admin_csrf=csrf-token'
+      ])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({
+        reason: 'Credential ditolak WhatsApp',
+        currentPassword: 'admin123',
+        confirmation: 'RESET_WHATSAPP_SESSION'
+      })
+      .expect(202);
+
+    expect(response.body.data.session.state).toBe('disconnected');
+    expect(adminAuthService.verifyUserPassword).toHaveBeenCalledWith(
+      admin.id,
+      'admin123'
+    );
+    expect(whatsappService.resetCredentials).toHaveBeenCalledOnce();
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'session.auth_reset' })
+    );
+  });
+
+  it('rejects credential reset without exact confirmation or valid password', async () => {
+    const {
+      app,
+      adminAuthService,
+      whatsappService
+    } = createTestApp();
+    const endpoint = '/api/admin/v1/session/reset';
+    const requestWithCsrf = () =>
+      request(app)
+        .post(endpoint)
+        .set('Cookie', [
+          'admin_session=session-token',
+          'admin_csrf=csrf-token'
+        ])
+        .set('X-CSRF-Token', 'csrf-token');
+
+    const badConfirmation = await requestWithCsrf()
+      .send({
+        reason: 'Credential ditolak WhatsApp',
+        currentPassword: 'admin123',
+        confirmation: 'reset'
+      })
+      .expect(400);
+    expect(badConfirmation.body.error.code).toBe(
+      'SESSION_RESET_CONFIRMATION_REQUIRED'
+    );
+
+    const badPassword = await requestWithCsrf()
+      .send({
+        reason: 'Credential ditolak WhatsApp',
+        currentPassword: 'wrong-password',
+        confirmation: 'RESET_WHATSAPP_SESSION'
+      })
+      .expect(403);
+    expect(badPassword.body.error.code).toBe(
+      'STEP_UP_AUTHENTICATION_FAILED'
+    );
+    expect(adminAuthService.verifyUserPassword).toHaveBeenCalledWith(
+      admin.id,
+      'wrong-password'
+    );
+    expect(whatsappService.resetCredentials).not.toHaveBeenCalled();
   });
 
   it('immediately applies and audits an emergency pause', async () => {

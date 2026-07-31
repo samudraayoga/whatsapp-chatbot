@@ -1,5 +1,6 @@
 import { DisconnectReason } from '@whiskeysockets/baileys';
 import {
+  canResetWhatsAppCredentials,
   getReconnectDelayMs,
   isTerminalDisconnect,
   resolveReconnectEligibility,
@@ -7,6 +8,46 @@ import {
 } from '../src/services/whatsapp.service.js';
 
 describe('WhatsApp reconnect policy', () => {
+  it.each([
+    ['logged_out', 'logged_out'],
+    ['bad_session', 'bad_session'],
+    ['disconnected', 'fatal']
+  ] as const)(
+    'allows credential reset for terminal state %s with %s classification',
+    (state, lastDisconnectClassification) => {
+      expect(
+        canResetWhatsAppCredentials({
+          state,
+          lastDisconnectClassification,
+          isShuttingDown: false
+        })
+      ).toBe(true);
+    }
+  );
+
+  it.each(['connected', 'connecting', 'qr_required', 'reconnecting'] as const)(
+    'blocks credential reset while state is %s',
+    (state) => {
+      expect(
+        canResetWhatsAppCredentials({
+          state,
+          lastDisconnectClassification: null,
+          isShuttingDown: false
+        })
+      ).toBe(false);
+    }
+  );
+
+  it('blocks credential reset while service is shutting down', () => {
+    expect(
+      canResetWhatsAppCredentials({
+        state: 'logged_out',
+        lastDisconnectClassification: 'logged_out',
+        isShuttingDown: true
+      })
+    ).toBe(false);
+  });
+
   it.each([
     DisconnectReason.loggedOut,
     DisconnectReason.badSession,

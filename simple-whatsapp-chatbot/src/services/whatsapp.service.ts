@@ -87,6 +87,32 @@ export class ReconnectNotAllowedError extends Error {
   }
 }
 
+export class CredentialResetNotAllowedError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = 'CredentialResetNotAllowedError';
+  }
+}
+
+export const canResetWhatsAppCredentials = (input: {
+  state: WhatsAppOperationalState;
+  lastDisconnectClassification:
+    | WhatsAppDisconnectClassification
+    | null;
+  isShuttingDown: boolean;
+}): boolean => {
+  if (input.isShuttingDown) return false;
+  if (input.state === 'logged_out' || input.state === 'bad_session') {
+    return true;
+  }
+  return (
+    input.state === 'disconnected' &&
+    ['fatal', 'logged_out', 'bad_session'].includes(
+      input.lastDisconnectClassification ?? ''
+    )
+  );
+};
+
 const fatalDisconnectCodes = new Set<number>([
   DisconnectReason.loggedOut,
   DisconnectReason.badSession,
@@ -180,9 +206,11 @@ export class WhatsAppService {
   private nextRetryAt: string | null = null;
   private pairingQr: { value: string; expiresAt: string } | null = null;
   private pairingQrTimer: NodeJS.Timeout | null = null;
+  private pairingRefreshInFlight = false;
   private credentialUpdatedAt: string | null = null;
   private manualPaused = false;
   private reconnectInFlight = false;
+  private credentialResetInFlight = false;
   private isShuttingDown = false;
 
   constructor(
@@ -557,6 +585,83 @@ export class WhatsAppService {
     }
   }
 
+  async resetCredentials(): Promise<WhatsAppOperationalStatus> {
+    if (this.credentialResetInFlight) {
+      throw new CredentialResetNotAllowedError(
+        'credential_reset_already_in_progress'
+      );
+    }
+    if (
+      !canResetWhatsAppCredentials({
+        state: this.getOperationalStatus().state,
+        lastDisconnectClassification:
+          this.lastDisconnect?.classification ?? null,
+        isShuttingDown: this.isShuttingDown
+      })
+    ) {
+      throw new CredentialResetNotAllowedError(
+        this.isShuttingDown
+          ? 'service_shutting_down'
+          : 'credential_reset_not_required'
+      );
+    }
+
+    this.credentialResetInFlight = true;
+    this.clearReconnectTimer();
+    this.clearPairingQr();
+    this.cleanupSocketListeners();
+
+    try {
+      if (this.socket) {
+        await this.socket.ws.close().catch(() => undefined);
+      }
+      this.socket = null;
+
+      const authDirectory = path.resolve(env.WA_AUTH_PATH);
+      if (
+        authDirectory === path.parse(authDirectory).root ||
+        authDirectory === path.resolve('.')
+      ) {
+        throw new Error('Unsafe WhatsApp auth directory');
+      }
+
+      await fs.mkdir(authDirectory, { recursive: true });
+      const authDirectoryStat = await fs.lstat(authDirectory);
+      if (authDirectoryStat.isSymbolicLink()) {
+        throw new Error('WhatsApp auth directory must not be a symbolic link');
+      }
+      const entries = await fs.readdir(authDirectory);
+      await Promise.all(
+        entries.map(async (entry) => {
+          const target = path.resolve(authDirectory, entry);
+          if (path.dirname(target) !== authDirectory) {
+            throw new Error('Unsafe WhatsApp credential path');
+          }
+          await fs.rm(target, { recursive: true, force: true });
+        })
+      );
+
+      this.status = 'connecting';
+      this.operationalState = 'connecting';
+      this.connectedSince = null;
+      this.lastDisconnect = null;
+      this.reconnectAttempt = 0;
+      this.nextRetryAt = null;
+      this.credentialUpdatedAt = null;
+      this.publishOperationalEvent('session.credentials_reset', 'critical');
+
+      await this.startSocket();
+      return this.getOperationalStatus();
+    } catch (error) {
+      this.status = 'disconnected';
+      this.operationalState = 'disconnected';
+      this.publishOperationalEvent('session.credential_reset_failed', 'critical');
+      throw error;
+    } finally {
+      this.credentialResetInFlight = false;
+    }
+  }
+
   pauseSending(): void {
     if (this.manualPaused) {
       return;
@@ -596,6 +701,22 @@ export class WhatsAppService {
       ''
     ).trim();
   }
+
+  private readonly firstChatGreeting = `Halo! 👋
+
+Terima kasih telah menghubungi Raho Club Premier.
+
+Saya siap membantu Anda mendapatkan informasi seputar layanan kami.
+
+Silakan pilih menu di bawah ini:
+
+1. Tentang Raho Club Premier
+2. Layanan dan Program Kesehatan
+3. Lokasi Cabang
+4. Reservasi
+5. Hubungi Admin
+
+Balas dengan angka 1–5.`;
 
   private async handleMessagesUpsert(type: string, messages: WAMessage[]): Promise<void> {
     if (type !== 'notify') {
@@ -637,18 +758,12 @@ export class WhatsAppService {
       return;
     }
 
-    const evaluation = await this.chatbotService.evaluate(text);
     const savedIncoming = await this.messageService.saveMessage({
       whatsappMessageId,
       whatsappJid: remoteJid,
       direction: 'incoming',
       content: text,
-      displayName: message.pushName ?? null,
-      createHandoff: evaluation.matchedRule.action === 'create_handoff',
-      metadata: {
-        chatbotVersionId: evaluation.versionId,
-        chatbotRuleId: evaluation.matchedRule.id
-      }
+      displayName: message.pushName ?? null
     });
 
     if (!savedIncoming.inserted) {
@@ -660,13 +775,27 @@ export class WhatsAppService {
       phone: maskPhoneNumber(remoteJid.replace(/@.+$/, ''))
     });
 
-    const response = await this.sendText(remoteJid, evaluation.response);
+    const evaluation = await this.chatbotService.evaluate(
+      savedIncoming.isFirstIncoming ? 'menu' : text
+    );
+    const responseText = savedIncoming.isFirstIncoming
+      ? this.firstChatGreeting
+      : evaluation.response;
+
+    await this.messageService.applyChatbotEvaluation({
+      whatsappMessageId,
+      chatbotVersionId: evaluation.versionId,
+      chatbotRuleId: evaluation.matchedRule.id,
+      createHandoff: evaluation.matchedRule.action === 'create_handoff'
+    });
+
+    const response = await this.sendText(remoteJid, responseText);
 
     await this.messageService.saveMessage({
       whatsappMessageId: response?.key.id ?? null,
       whatsappJid: remoteJid,
       direction: 'outgoing',
-      content: evaluation.response,
+      content: responseText,
       status: 'sent',
       metadata: {
         chatbotVersionId: evaluation.versionId,
@@ -741,8 +870,43 @@ export class WhatsAppService {
         this.pairingQr = null;
         this.pairingQrTimer = null;
         this.publishOperationalEvent('session.qr_expired', 'warning');
+        void this.refreshExpiredPairingQr();
       }
     }, PAIRING_QR_TTL_MS);
+  }
+
+  private async refreshExpiredPairingQr(): Promise<void> {
+    if (
+      !this.socket ||
+      this.operationalState !== 'qr_required' ||
+      this.isShuttingDown ||
+      this.pairingRefreshInFlight ||
+      this.credentialResetInFlight
+    ) {
+      return;
+    }
+
+    this.pairingRefreshInFlight = true;
+    this.cleanupSocketListeners();
+    const staleSocket = this.socket;
+    this.socket = null;
+    this.status = 'connecting';
+    this.operationalState = 'connecting';
+    this.publishOperationalEvent('session.qr_refresh_requested', 'warning');
+
+    try {
+      await staleSocket.ws.close().catch(() => undefined);
+      await this.startSocket();
+    } catch (error) {
+      this.status = 'disconnected';
+      this.operationalState = 'disconnected';
+      logger.error('Failed to refresh expired WhatsApp QR', {
+        error: sanitizeOperationalError(error)
+      });
+      this.publishOperationalEvent('session.qr_refresh_failed', 'critical');
+    } finally {
+      this.pairingRefreshInFlight = false;
+    }
   }
 
   private clearPairingQr(): void {

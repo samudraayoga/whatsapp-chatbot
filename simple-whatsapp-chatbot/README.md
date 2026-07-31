@@ -247,6 +247,7 @@ docker compose up --build
 - `GET /api/admin/v1/session`
 - `GET /api/admin/v1/session/qr`
 - `POST /api/admin/v1/session/reconnect`
+- `POST /api/admin/v1/session/reset`
 - `GET /api/admin/v1/safety/stats`
 - `GET /api/admin/v1/safety/metrics`
 - `POST /api/admin/v1/safety/pause`

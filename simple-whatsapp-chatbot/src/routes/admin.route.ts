@@ -121,6 +121,13 @@ export const createAdminRouter = ({
     sessionController.reconnect
   );
   router.post(
+    '/api/admin/v1/session/reset',
+    mutationRateLimiter,
+    verifyCsrf,
+    requirePermission('session.reset'),
+    sessionController.resetCredentials
+  );
+  router.post(
     '/api/admin/v1/safety/pause',
     mutationRateLimiter,
     verifyCsrf,

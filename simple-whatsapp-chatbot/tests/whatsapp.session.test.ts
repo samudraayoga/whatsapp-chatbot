@@ -10,6 +10,11 @@ import {
 
 type SessionHarness = {
   handleConnectionUpdate(update: Partial<ConnectionState>): Promise<void>;
+  socket: {
+    ev: { removeAllListeners(event: string): void };
+    ws: { close(): Promise<void> };
+  } | null;
+  startSocket(): Promise<void>;
 };
 
 const createService = () => {
@@ -62,6 +67,25 @@ describe('WhatsApp rich session lifecycle', () => {
 
     expect(service.getOperationalStatus().state).toBe('connected');
     expect(service.getPairingQr()).toBeNull();
+  });
+
+  it('starts a fresh pairing socket after a QR expires', async () => {
+    vi.useFakeTimers();
+    const { service, harness } = createService();
+    const close = vi.fn(async () => undefined);
+    harness.socket = {
+      ev: { removeAllListeners: vi.fn() },
+      ws: { close }
+    };
+    const startSocket = vi
+      .spyOn(harness, 'startSocket')
+      .mockResolvedValue(undefined);
+
+    await harness.handleConnectionUpdate({ qr: 'temporary-qr' });
+    await vi.advanceTimersByTimeAsync(PAIRING_QR_TTL_MS);
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(startSocket).toHaveBeenCalledOnce();
   });
 
   it('keeps only one reconnect timer for repeated recoverable disconnects', async () => {

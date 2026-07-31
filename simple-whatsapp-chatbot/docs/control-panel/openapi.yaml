@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: WhatsApp Chatbot Admin API
-  version: 0.7.0
-  summary: Sprint 6 contract for the WhatsApp control panel
+  version: 0.8.0
+  summary: Admin contract for the WhatsApp control panel
   description: |
     Sprint 6 adds normalized safety telemetry, durable pause state, traceable
-    safety delays, guarded resume/reset, and Prometheus safety metrics.
+    safety delays, guarded resume/reset, Prometheus safety metrics, and
+    step-up authenticated WhatsApp credential reset/re-pair.
     Browser clients authenticate using a secure server-managed session cookie.
 servers:
   - url: http://localhost:3000
@@ -586,6 +587,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/session/reset:
+    post:
+      tags: [Session]
+      operationId: resetWhatsAppSession
+      summary: Delete rejected WhatsApp credentials and start a new QR pairing
+      description: |
+        Admin-only destructive recovery for a terminal logged-out or bad-session
+        state. Message history, contacts, chatbot rules, and audit logs are not
+        deleted.
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionResetRequest"
+      responses:
+        "202":
+          description: Credentials reset and pairing startup accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2535,6 +2569,23 @@ components:
           type: string
           minLength: 5
           maxLength: 500
+
+    SessionResetRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, currentPassword, confirmation]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        currentPassword:
+          type: string
+          writeOnly: true
+          maxLength: 256
+        confirmation:
+          type: string
+          enum: [RESET_WHATSAPP_SESSION]
 
     SafetyResumeRequest:
       type: object

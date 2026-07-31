@@ -28,9 +28,10 @@ npm run check
 - `baileys-antiban` hanya diakses oleh backend melalui operational facade.
 
 Sprint 2 menyediakan rich session page, QR pairing dengan countdown, live SSE
-update dengan fallback polling 10 detik, guarded reconnect, dan emergency pause.
-Action reset/re-pair credential tetap khusus backlog Admin karena membutuhkan
-step-up authentication.
+update dengan fallback polling 10 detik, guarded reconnect, emergency pause,
+dan reset/re-pair credential khusus Admin. Reset memerlukan CSRF, permission
+`session.reset`, password saat ini, alasan, serta typed confirmation sebelum
+backend menghapus credential WhatsApp dan membuat QR baru.
 
 Sprint 3 menyediakan:
 
