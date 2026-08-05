@@ -48,7 +48,7 @@ Admin/Operator
 React + Nginx ── /api/* ──► Admin API
                                 ├── Auth/RBAC/CSRF/Audit
                                 ├── Outbox worker
-                                ├── Chatbot rule versions
+                                ├── Chatbot active config
                                 └── PostgreSQL
 ```
 
@@ -72,7 +72,7 @@ Saat aplikasi dijalankan, prosesnya adalah:
 3. Membuat koneksi PostgreSQL.
 4. Menjalankan migration database.
 5. Memanaskan cache chatbot rules dan merestore manual safety state.
-6. Memastikan bootstrap admin tersedia dan membersihkan session kedaluwarsa.
+6. Memastikan kedua akun bootstrap admin tersedia dan membersihkan session kedaluwarsa.
 7. Membuat koneksi WhatsApp lalu membungkus socket dengan `baileys-antiban`.
 8. Menyalakan durable outbox worker.
 9. Membuat Express application dan membuka HTTP server.
@@ -139,6 +139,9 @@ WA_AUTH_PATH=
 ADMIN_BOOTSTRAP_USERNAME=
 ADMIN_BOOTSTRAP_PASSWORD=
 ADMIN_BOOTSTRAP_DISPLAY_NAME=
+SUPERADMIN_BOOTSTRAP_USERNAME=
+SUPERADMIN_BOOTSTRAP_PASSWORD=
+SUPERADMIN_BOOTSTRAP_DISPLAY_NAME=
 ADMIN_SESSION_TTL_HOURS=
 
 SAFETY_RESET_ENABLED=
@@ -897,19 +900,16 @@ Pada mode non-production, stack trace ikut dikirim dalam response.
 
 ## 18. Temuan dan Risiko Teknis
 
-### 18.1 README tidak sinkron
+### 18.1 Dokumentasi chatbot
 
-README chatbot masih menyebut command seperti:
+README, konfigurasi aktif, dan rule awal memakai menu Raho Club Premier yang
+sama. Perubahan konten berikutnya dilakukan melalui alur
+`edit → test → simpan & aktifkan`.
 
-- `ping`;
-- `jam`;
-- pola menu versi lama.
+### 18.2 Konsistensi menu nomor 3 dan 4
 
-Implementasi saat ini hanya memakai menu Raho Club Premier.
-
-### 18.2 Menu nomor 3 dan 4 tidak cocok
-
-Label dan jawaban perlu diselaraskan agar pengguna tidak menerima informasi yang salah.
+Label dan jawaban awal sudah diselaraskan serta dilindungi regression test.
+Perubahan melalui editor harus tetap menjaga konsistensi tersebut.
 
 ### 18.3 JID canonicalizer belum aktif
 

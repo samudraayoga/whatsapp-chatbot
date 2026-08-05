@@ -1,13 +1,8 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from './layout/AppShell';
 import { OverviewPage } from './pages/OverviewPage';
-import {
-  currentAdminQueryKey,
-  overviewQueryKey,
-  useCurrentAdminQuery,
-  useOverviewQuery
-} from './api/queries';
+import { useCurrentAdminQuery, useOverviewQuery } from './api/queries';
 import { LoginPage } from './pages/LoginPage';
 import { ApiClientError, sessionExpiredEvent } from './api/client';
 import { logout } from './api/auth';
@@ -21,11 +16,41 @@ import { MessageDetailPage } from './pages/MessageDetailPage';
 import { ComposePage } from './pages/ComposePage';
 import { ChatbotRulesPage } from './pages/ChatbotRulesPage';
 import { SafetyCenterPage } from './pages/SafetyCenterPage';
+import { replaceAuthenticatedCache } from './api/authenticated-cache';
+import { AiChatbotPage } from './pages/AiChatbotPage';
+import { AiChatbotErrorBoundary } from './pages/AiChatbotErrorBoundary';
+
+const isAiChatbotPath = (pathname: string) =>
+  pathname === '/ai-chatbot' || pathname.startsWith('/ai-chatbot/');
+
+const pageTitle = (pathname: string) => {
+  if (pathname === '/login') return 'Masuk';
+  if (pathname === '/overview' || pathname === '/') return 'Beranda';
+  if (pathname.startsWith('/inbox')) return 'Inbox';
+  if (pathname.startsWith('/contacts')) return 'Kontak';
+  if (pathname === '/messages/compose') return 'Tulis pesan';
+  if (pathname.startsWith('/messages')) return 'Riwayat pengiriman';
+  if (pathname === '/operations/session') return 'Sesi WhatsApp';
+  if (pathname === '/operations/safety') return 'Keamanan';
+  if (isAiChatbotPath(pathname)) return 'Integrasi Chatbot AI';
+  if (pathname.startsWith('/chatbot')) return 'Chatbot';
+  return 'Halaman tidak ditemukan';
+};
 
 export const App = () => {
   const locationPath = useLocationPath();
   const pathname = locationPath.split('?')[0];
   const queryClient = useQueryClient();
+  const authTransitionPending = useRef(false);
+  const transitionToLogin = useCallback(
+    async (target: string) => {
+      if (authTransitionPending.current) return;
+      authTransitionPending.current = true;
+      await replaceAuthenticatedCache(queryClient, null);
+      navigate(target, true);
+    },
+    [queryClient]
+  );
   const adminQuery = useCurrentAdminQuery();
   const overviewQuery = useOverviewQuery({
     enabled: Boolean(adminQuery.data)
@@ -33,26 +58,20 @@ export const App = () => {
   const streamState = useOperationalEvents(Boolean(adminQuery.data));
   const logoutMutation = useMutation({
     mutationFn: logout,
-    onSettled: () => {
-      queryClient.removeQueries({ queryKey: currentAdminQueryKey });
-      queryClient.removeQueries({ queryKey: overviewQueryKey });
-      navigate('/login', true);
-    }
+    onSettled: () => transitionToLogin('/login')
   });
 
   useEffect(() => {
     const handleSessionExpired = () => {
-      queryClient.removeQueries({ queryKey: currentAdminQueryKey });
-      queryClient.removeQueries({ queryKey: overviewQueryKey });
-      navigate(
-        `/login?returnTo=${encodeURIComponent(pathname)}&reason=session_expired`,
-        true
+      void transitionToLogin(
+        `/login?returnTo=${encodeURIComponent(pathname)}&reason=session_expired`
       );
     };
     window.addEventListener(sessionExpiredEvent, handleSessionExpired);
-    return () =>
+    return () => {
       window.removeEventListener(sessionExpiredEvent, handleSessionExpired);
-  }, [pathname, queryClient]);
+    };
+  }, [pathname, transitionToLogin]);
 
   useEffect(() => {
     if (
@@ -65,16 +84,38 @@ export const App = () => {
         adminQuery.error.status === 401
           ? '&reason=session_expired'
           : '';
-      navigate(
-        `/login?returnTo=${encodeURIComponent(pathname)}${reason}`,
-        true
+      void transitionToLogin(
+        `/login?returnTo=${encodeURIComponent(pathname)}${reason}`
       );
     }
-  }, [adminQuery.data, adminQuery.error, adminQuery.isPending, pathname]);
+  }, [
+    adminQuery.data,
+    adminQuery.error,
+    adminQuery.isPending,
+    pathname,
+    transitionToLogin
+  ]);
+
+  useEffect(() => {
+    if (adminQuery.data) {
+      authTransitionPending.current = false;
+    }
+  }, [adminQuery.data]);
 
   useEffect(() => {
     if (adminQuery.data && (pathname === '/' || pathname === '/login')) {
       navigate('/overview', true);
+    }
+  }, [adminQuery.data, pathname]);
+
+  useEffect(() => {
+    document.title = `${pageTitle(pathname)} · WhatsApp Control Room`;
+    if (adminQuery.data) {
+      const heading = document.querySelector<HTMLElement>('#main-content h1');
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
     }
   }, [adminQuery.data, pathname]);
 
@@ -140,6 +181,11 @@ export const App = () => {
       ) : pathname === '/chatbot/rules' &&
         adminQuery.data.data.permissions.includes('chatbot.manage') ? (
         <ChatbotRulesPage />
+      ) : isAiChatbotPath(pathname) &&
+        adminQuery.data.data.permissions.includes('chatbot.manage') ? (
+        <AiChatbotErrorBoundary resetKey={pathname}>
+          <AiChatbotPage pathname={pathname} />
+        </AiChatbotErrorBoundary>
       ) : (
         <section className="page-state page-state--error">
           <p className="eyebrow">404</p>

@@ -79,6 +79,7 @@ export type SendingBlock = {
 const baileysLogger = P({ level: 'silent' });
 type ProtectedWASocket = ReturnType<typeof makeWASocket> & { antiban: AntiBan };
 export const PAIRING_QR_TTL_MS = 10_000;
+const ANTIBAN_STATE_FILENAME = 'antiban-state.json';
 
 export class ReconnectNotAllowedError extends Error {
   constructor(readonly reason: string) {
@@ -102,7 +103,11 @@ export const canResetWhatsAppCredentials = (input: {
   isShuttingDown: boolean;
 }): boolean => {
   if (input.isShuttingDown) return false;
-  if (input.state === 'logged_out' || input.state === 'bad_session') {
+  if (
+    input.state === 'connected' ||
+    input.state === 'logged_out' ||
+    input.state === 'bad_session'
+  ) {
     return true;
   }
   return (
@@ -212,6 +217,7 @@ export class WhatsAppService {
   private reconnectInFlight = false;
   private credentialResetInFlight = false;
   private isShuttingDown = false;
+  private lifecycleGeneration = 0;
 
   constructor(
     private readonly chatbotService: ChatbotService,
@@ -329,16 +335,50 @@ export class WhatsAppService {
   }
 
   async connect(): Promise<void> {
+    const lifecycleGeneration = ++this.lifecycleGeneration;
     this.isShuttingDown = false;
     this.operationalState = 'starting';
-    await fs.mkdir(path.resolve(env.WA_AUTH_PATH), { recursive: true });
-    await this.readCredentialTimestamp();
-    await this.startSocket();
+    try {
+      await fs.mkdir(path.resolve(env.WA_AUTH_PATH), { recursive: true });
+      if (!this.isLifecycleActive(lifecycleGeneration)) return;
+
+      await this.readCredentialTimestamp();
+      if (!this.isLifecycleActive(lifecycleGeneration)) return;
+
+      await this.startSocket(lifecycleGeneration);
+    } catch (error) {
+      if (!this.isLifecycleActive(lifecycleGeneration)) return;
+
+      const reason = sanitizeOperationalError(
+        error,
+        'Unknown WhatsApp initialization error'
+      );
+      this.status = 'disconnected';
+      this.connectedSince = null;
+      this.lastDisconnect = {
+        reason,
+        classification: 'unknown',
+        occurredAt: new Date().toISOString()
+      };
+      this.operationalState = 'disconnected';
+      this.publishOperationalEvent(
+        'session.initialization_failed',
+        'critical',
+        { reason }
+      );
+      this.scheduleReconnect();
+      throw error;
+    }
   }
 
-  private async startSocket(): Promise<void> {
+  private async startSocket(
+    lifecycleGeneration = this.lifecycleGeneration
+  ): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(path.resolve(env.WA_AUTH_PATH));
+    if (!this.isLifecycleActive(lifecycleGeneration)) return;
+
     const { version, isLatest } = await fetchLatestBaileysVersion();
+    if (!this.isLifecycleActive(lifecycleGeneration)) return;
 
     this.cleanupSocketListeners();
     this.status = 'connecting';
@@ -367,7 +407,7 @@ export class WhatsAppService {
       rawSocket as any,
       {
         preset: 'conservative',
-        persist: path.resolve(env.WA_AUTH_PATH, 'antiban-state.json'),
+        persist: path.resolve(env.WA_AUTH_PATH, ANTIBAN_STATE_FILENAME),
         logging: false
       },
       undefined,
@@ -610,12 +650,16 @@ export class WhatsAppService {
     this.clearReconnectTimer();
     this.clearPairingQr();
     this.cleanupSocketListeners();
+    const socketToClose = this.socket;
+    this.socket = null;
+    this.status = 'connecting';
+    this.operationalState = 'connecting';
+    this.connectedSince = null;
 
     try {
-      if (this.socket) {
-        await this.socket.ws.close().catch(() => undefined);
+      if (socketToClose) {
+        await socketToClose.ws.close().catch(() => undefined);
       }
-      this.socket = null;
 
       const authDirectory = path.resolve(env.WA_AUTH_PATH);
       if (
@@ -632,13 +676,15 @@ export class WhatsAppService {
       }
       const entries = await fs.readdir(authDirectory);
       await Promise.all(
-        entries.map(async (entry) => {
-          const target = path.resolve(authDirectory, entry);
-          if (path.dirname(target) !== authDirectory) {
-            throw new Error('Unsafe WhatsApp credential path');
-          }
-          await fs.rm(target, { recursive: true, force: true });
-        })
+        entries
+          .filter((entry) => entry !== ANTIBAN_STATE_FILENAME)
+          .map(async (entry) => {
+            const target = path.resolve(authDirectory, entry);
+            if (path.dirname(target) !== authDirectory) {
+              throw new Error('Unsafe WhatsApp credential path');
+            }
+            await fs.rm(target, { recursive: true, force: true });
+          })
       );
 
       this.status = 'connecting';
@@ -702,22 +748,6 @@ export class WhatsAppService {
     ).trim();
   }
 
-  private readonly firstChatGreeting = `Halo! 👋
-
-Terima kasih telah menghubungi Raho Club Premier.
-
-Saya siap membantu Anda mendapatkan informasi seputar layanan kami.
-
-Silakan pilih menu di bawah ini:
-
-1. Tentang Raho Club Premier
-2. Layanan dan Program Kesehatan
-3. Lokasi Cabang
-4. Reservasi
-5. Hubungi Admin
-
-Balas dengan angka 1–5.`;
-
   private async handleMessagesUpsert(type: string, messages: WAMessage[]): Promise<void> {
     if (type !== 'notify') {
       return;
@@ -776,15 +806,14 @@ Balas dengan angka 1–5.`;
     });
 
     const evaluation = await this.chatbotService.evaluate(
-      savedIncoming.isFirstIncoming ? 'menu' : text
+      savedIncoming.isFirstIncoming ? '' : text
     );
-    const responseText = savedIncoming.isFirstIncoming
-      ? this.firstChatGreeting
-      : evaluation.response;
+    const responseText = evaluation.response;
 
     await this.messageService.applyChatbotEvaluation({
       whatsappMessageId,
       chatbotVersionId: evaluation.versionId,
+      chatbotRevision: evaluation.revision,
       chatbotRuleId: evaluation.matchedRule.id,
       createHandoff: evaluation.matchedRule.action === 'create_handoff'
     });
@@ -799,6 +828,7 @@ Balas dengan angka 1–5.`;
       status: 'sent',
       metadata: {
         chatbotVersionId: evaluation.versionId,
+        chatbotRevision: evaluation.revision,
         chatbotRuleId: evaluation.matchedRule.id
       }
     });
@@ -824,6 +854,7 @@ Balas dengan angka 1–5.`;
 
   async disconnect(): Promise<void> {
     this.isShuttingDown = true;
+    this.lifecycleGeneration += 1;
     this.operationalState = 'shutting_down';
     this.publishOperationalEvent('session.shutting_down');
     this.clearReconnectTimer();
@@ -843,6 +874,14 @@ Balas dengan angka 1–5.`;
     this.status = 'disconnected';
     this.operationalState = 'disconnected';
     this.connectedSince = null;
+    this.reconnectInFlight = false;
+  }
+
+  private isLifecycleActive(lifecycleGeneration: number): boolean {
+    return (
+      !this.isShuttingDown &&
+      lifecycleGeneration === this.lifecycleGeneration
+    );
   }
 
   private getReconnectEligibility(

@@ -28,6 +28,19 @@ import { env } from './config/env.js';
 import { ChatbotService } from './services/chatbot.service.js';
 import { AdminChatbotController } from './controllers/admin-chatbot.controller.js';
 import { SafetyCenterService } from './services/safety-center.service.js';
+import { AiChatbotFoundationService } from './services/ai-chatbot-foundation.service.js';
+import { AdminAiChatbotController } from './controllers/admin-ai-chatbot.controller.js';
+import { TenantContextService } from './services/tenant-context.service.js';
+import { AiChatbotService } from './services/ai-chatbot.service.js';
+import { KnowledgeService } from './services/knowledge.service.js';
+import { AdminAiKnowledgeController } from './controllers/admin-ai-knowledge.controller.js';
+import { DocumentService } from './services/document.service.js';
+import { AdminAiDocumentController } from './controllers/admin-ai-document.controller.js';
+import { AiRagRuntimeService } from './services/ai-rag-runtime.service.js';
+import { AiRagController } from './controllers/ai-rag.controller.js';
+import { createAiRuntimeRouter } from './routes/ai-runtime.route.js';
+import { AiOperationsService } from './services/ai-operations.service.js';
+import { AdminAiOperationsController } from './controllers/admin-ai-operations.controller.js';
 
 type CreateAppDeps = {
   whatsappService: WhatsAppService;
@@ -42,6 +55,13 @@ type CreateAppDeps = {
   outboxService?: OutboxService;
   chatbotService?: ChatbotService;
   safetyCenterService?: SafetyCenterService;
+  aiChatbotFoundationService?: AiChatbotFoundationService;
+  tenantContextService?: TenantContextService;
+  aiChatbotService?: AiChatbotService;
+  knowledgeService?: KnowledgeService;
+  documentService?: DocumentService;
+  aiRagRuntimeService?: AiRagRuntimeService;
+  aiOperationsService?: AiOperationsService;
 };
 
 export const createApp = ({
@@ -56,7 +76,14 @@ export const createApp = ({
   handoffService,
   outboxService,
   chatbotService,
-  safetyCenterService
+  safetyCenterService,
+  aiChatbotFoundationService,
+  tenantContextService,
+  aiChatbotService,
+  knowledgeService,
+  documentService,
+  aiRagRuntimeService,
+  aiOperationsService
 }: CreateAppDeps) => {
   const app = express();
   const messageController = new MessageController({ whatsappService, messageService });
@@ -89,8 +116,7 @@ export const createApp = ({
     whatsappService,
     resolvedOverviewService,
     resolvedAuditService,
-    resolvedOperationalEventService,
-    resolvedAuthService
+    resolvedOperationalEventService
   );
   const resolvedSafetyCenterService =
     safetyCenterService ??
@@ -115,6 +141,34 @@ export const createApp = ({
     chatbotService ?? new ChatbotService(),
     resolvedAuditService
   );
+  const resolvedTenantContextService =
+    tenantContextService ?? new TenantContextService();
+  const resolvedAiChatbotService = aiChatbotService ?? new AiChatbotService();
+  const adminAiChatbotController = new AdminAiChatbotController(
+    aiChatbotFoundationService ?? new AiChatbotFoundationService(),
+    resolvedAiChatbotService,
+    resolvedAuditService
+  );
+  const resolvedDocumentService = documentService ?? new DocumentService();
+  const resolvedKnowledgeService = knowledgeService ?? new KnowledgeService();
+  const adminAiKnowledgeController = new AdminAiKnowledgeController(
+    resolvedKnowledgeService,
+    resolvedAuditService,
+    resolvedDocumentService
+  );
+  const adminAiDocumentController = new AdminAiDocumentController(
+    resolvedDocumentService,
+    resolvedAuditService
+  );
+  const resolvedAiRagRuntimeService = aiRagRuntimeService ?? new AiRagRuntimeService();
+  const aiRagController = new AiRagController(
+    resolvedAiRagRuntimeService,
+    resolvedAuditService
+  );
+  const adminAiOperationsController = new AdminAiOperationsController(
+    aiOperationsService ?? new AiOperationsService(undefined, resolvedAiRagRuntimeService, resolvedKnowledgeService),
+    resolvedAuditService
+  );
 
   app.disable('x-powered-by');
   if (env.TRUST_PROXY_HOPS > 0) {
@@ -125,6 +179,7 @@ export const createApp = ({
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(createHealthRouter(whatsappService, databaseHealthCheck));
+  app.use(createAiRuntimeRouter(aiRagController));
   app.use(
     createAdminRouter({
       authService: resolvedAuthService,
@@ -135,7 +190,13 @@ export const createApp = ({
       readController: adminReadController,
       handoffController: adminHandoffController,
       messageController: adminMessageController,
-      chatbotController: adminChatbotController
+      chatbotController: adminChatbotController,
+      aiChatbotController: adminAiChatbotController,
+      aiKnowledgeController: adminAiKnowledgeController,
+      aiDocumentController: adminAiDocumentController,
+      aiRagController,
+      aiOperationsController: adminAiOperationsController,
+      tenantContextService: resolvedTenantContextService
     })
   );
   app.use(createWhatsAppRouter(whatsappService));

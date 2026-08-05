@@ -70,9 +70,9 @@ describe('Sprint 4 safe compose and timeline', () => {
     );
 
     await user.type(screen.getByLabelText('Isi pesan'), 'Halo durable');
-    await user.dblClick(screen.getByRole('button', { name: 'Masukkan ke outbox' }));
+    await user.dblClick(screen.getByRole('button', { name: 'Masukkan ke antrean' }));
 
-    expect(await screen.findByText('Menerima command…')).toBeDisabled();
+    expect(await screen.findByText('Menyiapkan pesan…')).toBeDisabled();
     expect(requests).toHaveLength(1);
     expect(requests[0]).toHaveLength(36);
   });
@@ -97,7 +97,9 @@ describe('Sprint 4 safe compose and timeline', () => {
     renderWithQuery(<OutboxPage user={operator} />);
 
     expect(
-      await screen.findByText('Reconciliation required — blind retry disabled')
+      await screen.findByText(
+        'Hasil pengiriman belum pasti — periksa manual sebelum mencoba ulang.'
+      )
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Controlled retry' })

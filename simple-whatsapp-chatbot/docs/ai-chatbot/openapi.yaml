@@ -1,0 +1,3948 @@
+openapi: 3.1.0
+info:
+  title: RAHO AI Chatbot Admin and Runtime API
+  version: 0.7.0
+  summary: Sprint 6 contract for the Admin Operations Beta
+  description: |
+    This contract is additive to the existing WhatsApp Admin API. Sprint 1
+    foundation, integration, and prompt operations, Sprint 2 category and
+    manual knowledge governance, plus Sprint 3 document processing, chunking,
+    embedding, strict-grounded RAG, deterministic safety pre-check/output
+    validation, bounded memory, interest/admin detection, disclaimer, and
+    idempotent handoff are implemented. Direct customer WhatsApp cutover remains disabled.
+
+    Browser routes use the existing secure admin cookie, CSRF convention, and
+    server-derived tenant context. Browser payloads never select tenant_id and
+    never receive provider credentials.
+
+    The deterministic rule engine remains under /api/admin/v1/chatbot/*.
+    This specification owns only /api/admin/v1/ai-chatbot/*.
+servers:
+  - url: http://localhost:3000
+    description: Local backend
+tags:
+  - name: AI Foundation
+  - name: AI Integration
+  - name: AI Prompts
+  - name: AI Knowledge
+  - name: AI Categories
+  - name: AI Documents
+  - name: AI Playground
+  - name: AI Conversations
+  - name: AI Unanswered
+  - name: AI Analytics
+  - name: AI Runtime
+security:
+  - sessionCookie: []
+
+paths:
+  /api/admin/v1/ai-chatbot/foundation:
+    get:
+      tags: [AI Foundation]
+      operationId: getAiChatbotFoundation
+      summary: Describe the implemented Sprint 1 shell, guardrails, and configured capability states
+      description: |
+        This read-only endpoint is implemented. Customer traffic remains
+        disabled while Instructions and Settings are available for controlled
+        configuration; response generation remains planned.
+      x-implementation-status: implemented
+      x-target-sprint: 0
+      x-permission: ai.settings.read
+      responses:
+        "200":
+          description: AI foundation snapshot without credentials or secret references
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoundationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/integration:
+    get:
+      tags: [AI Integration]
+      operationId: getAiIntegration
+      summary: Read redacted integration settings for the current tenant
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.settings.read
+      responses:
+        "200":
+          description: Redacted integration settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [AI Integration]
+      operationId: updateAiIntegration
+      summary: Update integration settings without activating the integration
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.settings.manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationUpdateRequest"
+      responses:
+        "200":
+          description: Updated redacted settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/integration/activate:
+    post:
+      tags: [AI Integration]
+      operationId: activateAiIntegration
+      summary: Activate AI after every readiness and approval guard passes
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.settings.manage
+      description: Implemented as a fail-closed gate; Sprint 1 always rejects activation while the global release hard-off remains in force.
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivationRequest"
+      responses:
+        "200":
+          description: Integration activated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+
+  /api/admin/v1/ai-chatbot/integration/deactivate:
+    post:
+      tags: [AI Integration]
+      operationId: deactivateAiIntegration
+      summary: Disable new AI responses for the current tenant
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.settings.manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeactivationRequest"
+      responses:
+        "200":
+          description: Integration deactivated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/integration/test-connection:
+    post:
+      tags: [AI Integration]
+      operationId: testAiProviderConnection
+      summary: Test configured provider references without returning a secret
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.settings.manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Provider and model reachability result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTestResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+
+  /api/admin/v1/ai-chatbot/prompts:
+    get:
+      tags: [AI Prompts]
+      operationId: listAiPromptVersions
+      summary: List prompt versions for the current tenant
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.prompts.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Prompt version page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [AI Prompts]
+      operationId: createAiPromptVersion
+      summary: Create a draft prompt version
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.prompts.manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptCreateRequest"
+      responses:
+        "201":
+          description: Draft prompt created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/prompts/{promptId}/approve:
+    post:
+      tags: [AI Prompts]
+      operationId: approveAiPromptVersion
+      summary: Approve an immutable draft prompt version
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.prompts.approve
+      parameters:
+        - $ref: "#/components/parameters/PromptId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          description: Approved prompt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/prompts/{promptId}/publish:
+    post:
+      tags: [AI Prompts]
+      operationId: publishAiPromptVersion
+      summary: Publish an approved immutable prompt version
+      x-implementation-status: implemented
+      x-target-sprint: 1
+      x-permission: ai.prompts.manage
+      parameters:
+        - $ref: "#/components/parameters/PromptId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          description: Published prompt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/categories:
+    get:
+      tags: [AI Categories]
+      operationId: listKnowledgeCategories
+      summary: List tenant-scoped knowledge categories
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.read
+      responses:
+        "200":
+          description: Category list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [AI Categories]
+      operationId: createKnowledgeCategory
+      summary: Create a knowledge category
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.categories.manage
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryWriteRequest"
+      responses:
+        "201":
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/categories/{categoryId}:
+    put:
+      tags: [AI Categories]
+      operationId: updateKnowledgeCategory
+      summary: Update one tenant-scoped category
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.categories.manage
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryUpdateRequest"
+      responses:
+        "200":
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [AI Categories]
+      operationId: deleteKnowledgeCategory
+      summary: Delete an unused category or reject when referenced
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.categories.manage
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Category deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge:
+    get:
+      tags: [AI Knowledge]
+      operationId: listKnowledgeItems
+      summary: Search tenant-scoped knowledge
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/KnowledgeStatus"
+        - name: sourceType
+          in: query
+          schema:
+            $ref: "#/components/schemas/KnowledgeSourceType"
+        - name: categoryId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: expired
+          in: query
+          schema:
+            type: boolean
+        - name: requiresDisclaimer
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Knowledge page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [AI Knowledge]
+      operationId: createKnowledgeItem
+      summary: Create a draft FAQ or Markdown article
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeWriteRequest"
+      responses:
+        "201":
+          description: Draft knowledge created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}:
+    get:
+      tags: [AI Knowledge]
+      operationId: getKnowledgeItem
+      summary: Read one knowledge item and current version
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+      responses:
+        "200":
+          description: Knowledge detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [AI Knowledge]
+      operationId: updateKnowledgeItem
+      summary: Create or update a draft knowledge version
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeUpdateRequest"
+      responses:
+        "200":
+          description: Draft updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [AI Knowledge]
+      operationId: deleteKnowledgeDraft
+      summary: Delete a draft only; published history is retained
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Draft deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/bulk-action:
+    post:
+      tags: [AI Knowledge]
+      operationId: bulkKnowledgeAction
+      summary: Atomically publish or archive up to 50 knowledge items
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.publish
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeBulkActionRequest"
+      responses:
+        "200":
+          description: Updated knowledge items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeBulkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/submit-review:
+    post:
+      tags: [AI Knowledge]
+      operationId: submitKnowledgeForReview
+      summary: Move the current draft into review
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeLifecycleRequest"
+      responses:
+        "200":
+          description: Knowledge submitted for review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/request-revision:
+    post:
+      tags: [AI Knowledge]
+      operationId: requestKnowledgeRevision
+      summary: Return a review item to draft with an internal reason
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.review
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeLifecycleRequest"
+      responses:
+        "200":
+          description: Revision requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/approve:
+    post:
+      tags: [AI Knowledge]
+      operationId: approveKnowledgeItem
+      summary: Approve a reviewed immutable knowledge version
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.review
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeLifecycleRequest"
+      responses:
+        "200":
+          description: Knowledge approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/publish:
+    post:
+      tags: [AI Knowledge]
+      operationId: publishKnowledgeItem
+      summary: Publish an approved immutable knowledge version
+      description: Indexing is deliberately deferred to Sprint 3.
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.publish
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeLifecycleRequest"
+      responses:
+        "200":
+          description: Published; indexing remains pending Sprint 3
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/archive:
+    post:
+      tags: [AI Knowledge]
+      operationId: archiveKnowledgeItem
+      summary: Archive published knowledge and remove it from retrieval
+      x-implementation-status: implemented
+      x-target-sprint: 2
+      x-permission: knowledge.publish
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeLifecycleRequest"
+      responses:
+        "200":
+          description: Knowledge archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/reindex:
+    post:
+      tags: [AI Knowledge]
+      operationId: reindexKnowledgeItem
+      summary: Enqueue idempotent re-indexing of the published version
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.publish
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "202":
+          description: Re-index queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeReindexResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/documents:
+    get:
+      tags: [AI Documents]
+      operationId: listKnowledgeDocuments
+      summary: List tenant-scoped document processing records
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/DocumentStatus"
+      responses:
+        "200":
+          description: Document page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/v1/ai-chatbot/documents/upload:
+    post:
+      tags: [AI Documents]
+      operationId: uploadKnowledgeDocument
+      summary: Validate and store a private tenant-scoped document
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                categoryId:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Document validated and stored with uploaded status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: File exceeds configured limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Empty, unsafe, or invalid document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}:
+    get:
+      tags: [AI Documents]
+      operationId: getKnowledgeDocument
+      summary: Read document metadata and processing state
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Document metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [AI Documents]
+      operationId: deleteKnowledgeDocument
+      summary: Delete or tombstone a document according to retention policy
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Document deletion accepted/completed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/process:
+    post:
+      tags: [AI Documents]
+      operationId: processKnowledgeDocument
+      summary: Queue initial processing for a stored document
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "202":
+          description: Processing queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/reprocess:
+    post:
+      tags: [AI Documents]
+      operationId: reprocessKnowledgeDocument
+      summary: Queue idempotent extraction/chunking/embedding again
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "202":
+          description: Reprocessing queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/preview:
+    get:
+      tags: [AI Documents]
+      operationId: previewKnowledgeDocument
+      summary: Read bounded extraction preview and the first ten chunks
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: Safe no-store document preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentPreviewResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/archive:
+    post:
+      tags: [AI Documents]
+      operationId: archiveKnowledgeDocument
+      summary: Archive a document and deactivate all of its chunks atomically
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.publish
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Archived document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/admin/v1/ai-chatbot/knowledge/search-test:
+    post:
+      tags: [AI Knowledge]
+      operationId: searchKnowledgeChunksInternal
+      summary: Run tenant-scoped vector search without generating a customer answer
+      x-implementation-status: implemented
+      x-target-sprint: 3
+      x-permission: knowledge.read
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  minLength: 2
+                  maxLength: 500
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 5
+      responses:
+        "200":
+          description: Ranked active chunks for internal inspection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeSearchTestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+
+  /api/admin/v1/ai-chatbot/playground/test:
+    post:
+      tags: [AI Playground]
+      operationId: testAiChatbot
+      summary: Run the Sprint 6 evaluation Playground without sending a WhatsApp message
+      x-implementation-status: implemented
+      x-target-sprint: 4
+      x-permission: ai.playground.use
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaygroundRequest"
+      responses:
+        "200":
+          description: Grounded test result and source trace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResultResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+
+  /api/admin/v1/ai-chatbot/playground/test-cases:
+    get:
+      tags: [AI Playground]
+      operationId: listAiTestCases
+      summary: List tenant-scoped evaluation test cases with two latest runs
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.evaluations.manage
+      responses:
+        "200":
+          description: Test case repository
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestCaseListResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [AI Playground]
+      operationId: createAiTestCase
+      summary: Save an evaluation test case
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.evaluations.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestCaseWriteRequest" }
+      responses:
+        "201":
+          description: Test case created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestCaseResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/admin/v1/ai-chatbot/playground/test-cases/{testCaseId}:
+    put:
+      tags: [AI Playground]
+      operationId: updateAiTestCase
+      summary: Update an evaluation test case
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.evaluations.manage
+      parameters:
+        - $ref: "#/components/parameters/TestCaseId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestCaseWriteRequest" }
+      responses:
+        "200":
+          description: Test case updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestCaseResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/v1/ai-chatbot/playground/test-cases/{testCaseId}/run:
+    post:
+      tags: [AI Playground]
+      operationId: runAiTestCase
+      summary: Run one test case through the same Safe RAG pipeline
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.evaluations.manage
+      parameters:
+        - $ref: "#/components/parameters/TestCaseId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Scored test run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestRunResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/v1/ai-chatbot/playground/test-cases/run-batch:
+    post:
+      tags: [AI Playground]
+      operationId: runAiTestCaseBatch
+      summary: Run up to 100 active test cases and return pass/fail totals
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.evaluations.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      responses:
+        "200":
+          description: Batch evaluation report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestBatchResponse" }
+
+  /api/admin/v1/ai-chatbot/conversations:
+    get:
+      tags: [AI Conversations]
+      operationId: listAiConversations
+      summary: List tenant-scoped AI conversation traces
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.logs.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: answerStatus
+          in: query
+          schema:
+            $ref: "#/components/schemas/AnswerStatus"
+        - name: handoff
+          in: query
+          schema:
+            type: boolean
+        - name: channel
+          in: query
+          schema: { type: string, enum: [whatsapp, playground] }
+        - name: fallback
+          in: query
+          schema: { type: boolean }
+        - name: lowConfidence
+          in: query
+          schema: { type: boolean }
+        - name: unanswered
+          in: query
+          schema: { type: boolean }
+        - name: categoryId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: model
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: reviewerId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Conversation trace page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/conversations/export.csv:
+    get:
+      tags: [AI Conversations]
+      operationId: exportAiConversationsCsv
+      summary: Export a bounded masked conversation summary CSV
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.logs.read
+      responses:
+        "200":
+          description: At most 100 masked conversation summaries
+          content:
+            text/csv:
+              schema: { type: string }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/v1/ai-chatbot/conversations/{conversationId}:
+    get:
+      tags: [AI Conversations]
+      operationId: getAiConversation
+      summary: Read one AI conversation summary and trace metadata
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.logs.read
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200":
+          description: AI conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/conversations/{conversationId}/messages:
+    get:
+      tags: [AI Conversations]
+      operationId: listAiConversationMessages
+      summary: Read channel messages with AI trace/source metadata
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.logs.read
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Message and trace page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationMessageListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/messages/{traceId}/feedback:
+    post:
+      tags: [AI Conversations]
+      operationId: saveAiMessageFeedback
+      summary: Create or replace reviewer feedback for one AI trace
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.feedback.manage
+      parameters:
+        - $ref: "#/components/parameters/TraceId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FeedbackWriteRequest" }
+      responses:
+        "200":
+          description: Feedback saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedbackResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/v1/ai-chatbot/unanswered:
+    get:
+      tags: [AI Unanswered]
+      operationId: listUnansweredQuestions
+      summary: List aggregated unanswered questions for the current tenant
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.logs.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, reviewing, knowledge_created, resolved, ignored]
+      responses:
+        "200":
+          description: Unanswered question page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnansweredListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/unanswered/{unansweredId}:
+    put:
+      tags: [AI Unanswered]
+      operationId: updateUnansweredQuestion
+      summary: Change review status or category assignment
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.unanswered.manage
+      parameters:
+        - $ref: "#/components/parameters/UnansweredId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnansweredUpdateRequest"
+      responses:
+        "200":
+          description: Updated unanswered question
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnansweredResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/create-knowledge:
+    post:
+      tags: [AI Unanswered]
+      operationId: createKnowledgeFromUnanswered
+      summary: Create a draft FAQ from an unanswered question
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.unanswered.manage + knowledge.edit
+      parameters:
+        - $ref: "#/components/parameters/UnansweredId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKnowledgeFromUnansweredRequest"
+      responses:
+        "201":
+          description: Draft knowledge created; not published automatically
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnansweredKnowledgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/ignore:
+    post:
+      tags: [AI Unanswered]
+      operationId: ignoreUnansweredQuestion
+      summary: Ignore an unanswered aggregate with an audited reason
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.unanswered.manage
+      parameters:
+        - $ref: "#/components/parameters/UnansweredId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+      responses:
+        "200":
+          description: Aggregate ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnansweredResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/resolve:
+    post:
+      tags: [AI Unanswered]
+      operationId: resolveUnansweredQuestion
+      summary: Resolve an unanswered aggregate after review
+      x-implementation-status: implemented
+      x-target-sprint: 6
+      x-permission: ai.unanswered.manage
+      parameters:
+        - $ref: "#/components/parameters/UnansweredId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Aggregate resolved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UnansweredResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/v1/ai-chatbot/analytics/overview:
+    get:
+      tags: [AI Analytics]
+      operationId: getAiAnalyticsOverview
+      summary: Return tenant-scoped answer, fallback, handoff, latency, and cost KPIs
+      x-implementation-status: planned
+      x-target-sprint: 7
+      x-permission: chatbot.manage
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: AI analytics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/runtime/respond:
+    post:
+      tags: [AI Runtime]
+      operationId: generateGroundedAiResponse
+      summary: Generate a grounded response for an idempotent channel message
+      description: |
+        Internal service-to-service endpoint. Tenant is derived from the channel
+        session mapping. A successful response is an approved candidate for the
+        WhatsApp adapter; unsupported or failed retrieval returns a safe fallback.
+      security:
+        - serviceApiKey: []
+      x-implementation-status: implemented
+      x-target-sprint: 4
+      x-permission: internal-service
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeRespondRequest"
+      responses:
+        "200":
+          description: Grounded answer or safe fallback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResultResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          description: Runtime rate limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
+
+  /api/admin/v1/ai-chatbot/handoffs:
+    get:
+      tags: [AI Runtime]
+      operationId: listAiHandoffs
+      summary: List tenant-scoped AI handoffs
+      x-implementation-status: implemented
+      x-target-sprint: 5
+      x-permission: messages.read
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [open, assigned, in_progress, resolved, closed, canceled, all]
+      responses:
+        "200":
+          description: Tenant-scoped AI handoff page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/v1/ai-chatbot/handoffs/{handoffId}:
+    get:
+      tags: [AI Runtime]
+      operationId: getAiHandoff
+      summary: Return tenant-scoped AI handoff detail
+      x-implementation-status: implemented
+      x-target-sprint: 5
+      x-permission: messages.read
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "200":
+          description: AI handoff detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandoffResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/v1/ai-chatbot/handoffs/{handoffId}/{transition}:
+    post:
+      tags: [AI Runtime]
+      operationId: transitionAiHandoff
+      summary: Assign, start, resolve, or close an AI handoff
+      x-implementation-status: implemented
+      x-target-sprint: 5
+      x-permission: handoffs.manage
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+        - name: transition
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [assign, in-progress, resolve, close]
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                assigneeUserId: { type: string, format: uuid }
+                resolutionNote: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        "200":
+          description: Updated AI handoff
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandoffResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/v1/ai-chatbot/runtime/handoff:
+    post:
+      tags: [AI Runtime]
+      operationId: createAiRuntimeHandoff
+      summary: Idempotently create or return an existing handoff task
+      description: >-
+        Optional standalone service endpoint. Sprint 5 already creates the same
+        handoff_tasks record atomically inside runtime/respond; this separately
+        callable variant remains deferred.
+      security:
+        - serviceApiKey: []
+      x-implementation-status: planned
+      x-target-sprint: 5
+      x-permission: internal-service
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeHandoffRequest"
+      responses:
+        "200":
+          description: Existing idempotent handoff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "201":
+          description: Handoff created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: admin_session
+      description: Existing opaque server-managed admin session.
+    serviceApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Existing service-to-service credential; never used by browser code.
+
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 512
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    HandoffId:
+      name: handoffId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TestCaseId:
+      name: testCaseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TraceId:
+      name: traceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PromptId:
+      name: promptId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KnowledgeId:
+      name: knowledgeId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UnansweredId:
+      name: unansweredId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication is missing, invalid, or expired
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Tenant membership, permission, origin, or CSRF check failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource is absent from the current tenant
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Revision, lifecycle, idempotency, or processing-state conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    DependencyUnavailable:
+      description: An enabled AI dependency is unavailable; no unsafe answer was generated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    RequestId:
+      type: string
+      format: uuid
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            requestId:
+              $ref: "#/components/schemas/RequestId"
+
+    CapabilityState:
+      type: string
+      enum: [enabled, disabled, not_instrumented, unavailable]
+
+    FoundationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            - apiVersion
+            - phase
+            - status
+            - runtime
+            - tenant
+            - provider
+            - infrastructure
+            - guardrails
+            - modules
+          properties:
+            apiVersion:
+              type: string
+              const: v1
+            phase:
+              type: string
+              const: sprint_6
+            status:
+              type: string
+              enum: [development_ready, blocked]
+            runtime:
+              type: object
+              additionalProperties: false
+              required: [enabled, customerTraffic, mode, sourceOfTruth, strictGrounding]
+              properties:
+                enabled:
+                  type: boolean
+                  const: false
+                customerTraffic:
+                  type: string
+                  const: disabled
+                mode:
+                  type: string
+                  const: rag
+                sourceOfTruth:
+                  type: string
+                  const: knowledge_base
+                strictGrounding:
+                  type: boolean
+            tenant:
+              type: object
+              additionalProperties: false
+              required: [state, strategy, tenantId]
+              properties:
+                state:
+                  $ref: "#/components/schemas/CapabilityState"
+                strategy:
+                  type: string
+                  const: single_tenant_bootstrap
+                tenantId:
+                  type: [string, "null"]
+                  format: uuid
+            provider:
+              type: object
+              additionalProperties: false
+              required:
+                - state
+                - name
+                - chatModel
+                - embeddingModel
+                - secretReferenceConfigured
+              properties:
+                state:
+                  $ref: "#/components/schemas/CapabilityState"
+                name:
+                  type: [string, "null"]
+                chatModel:
+                  type: [string, "null"]
+                embeddingModel:
+                  type: [string, "null"]
+                secretReferenceConfigured:
+                  type: boolean
+            infrastructure:
+              type: object
+              additionalProperties: false
+              required: [vectorStore, queue, objectStorage]
+              properties:
+                vectorStore:
+                  $ref: "#/components/schemas/FoundationVectorStore"
+                queue:
+                  $ref: "#/components/schemas/FoundationQueue"
+                objectStorage:
+                  $ref: "#/components/schemas/FoundationObjectStorage"
+            guardrails:
+              type: object
+              additionalProperties: false
+              required:
+                - faqOnly
+                - booking
+                - payments
+                - diagnosis
+                - personalizedMedicalAdvice
+                - freeGenerationWithoutContext
+                - fallbackAndHandoff
+              properties:
+                faqOnly:
+                  type: boolean
+                  const: true
+                booking:
+                  type: boolean
+                  const: false
+                payments:
+                  type: boolean
+                  const: false
+                diagnosis:
+                  type: boolean
+                  const: false
+                personalizedMedicalAdvice:
+                  type: boolean
+                  const: false
+                freeGenerationWithoutContext:
+                  type: boolean
+                  const: false
+                fallbackAndHandoff:
+                  type: boolean
+                  const: true
+            modules:
+              type: array
+              minItems: 9
+              maxItems: 9
+              items:
+                $ref: "#/components/schemas/FoundationModule"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [requestId, generatedAt]
+      properties:
+        requestId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+
+    CursorResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [requestId, generatedAt, nextCursor]
+      properties:
+        requestId: { type: string }
+        generatedAt: { type: string, format: date-time }
+        nextCursor: { type: [string, "null"] }
+
+    FoundationModule:
+      type: object
+      additionalProperties: false
+      required: [key, label, path, state, targetSprint]
+      properties:
+        key:
+          type: string
+          enum:
+            - overview
+            - knowledge
+            - instructions
+            - playground
+            - conversations
+            - unanswered
+            - handoffs
+            - analytics
+            - settings
+        label:
+          type: string
+        path:
+          type: string
+          pattern: "^/ai-chatbot/"
+        state:
+          type: string
+          enum: [available, planned]
+        targetSprint:
+          type: integer
+          minimum: 0
+          maximum: 8
+
+    FoundationVectorStore:
+      type: object
+      additionalProperties: false
+      required: [state, adapter]
+      properties:
+        state:
+          $ref: "#/components/schemas/CapabilityState"
+        adapter:
+          type: string
+          const: postgresql_pgvector
+
+    FoundationQueue:
+      type: object
+      additionalProperties: false
+      required: [state, adapter]
+      properties:
+        state:
+          $ref: "#/components/schemas/CapabilityState"
+        adapter:
+          type: string
+          const: redis
+
+    FoundationObjectStorage:
+      type: object
+      additionalProperties: false
+      required: [state, adapter]
+      properties:
+        state:
+          $ref: "#/components/schemas/CapabilityState"
+        adapter:
+          type: string
+          const: s3_compatible
+
+    IntegrationSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenantId
+        - name
+        - provider
+        - chatModel
+        - embeddingProvider
+        - embeddingModel
+        - embeddingDimensions
+        - secretReferenceConfigured
+        - active
+        - effectiveEnabled
+        - strictGrounding
+        - maxResponseTokens
+        - temperature
+        - timeoutMs
+        - retryCount
+        - retrieval
+        - featureFlags
+        - revision
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        provider:
+          type: [string, "null"]
+        chatModel:
+          type: [string, "null"]
+        embeddingProvider:
+          type: [string, "null"]
+        embeddingModel:
+          type: [string, "null"]
+        embeddingDimensions:
+          type: [integer, "null"]
+          minimum: 1
+        secretReferenceConfigured:
+          type: boolean
+        active:
+          type: boolean
+        effectiveEnabled:
+          type: boolean
+          const: false
+        strictGrounding:
+          type: boolean
+          const: true
+        maxResponseTokens:
+          type: integer
+        temperature:
+          type: number
+        timeoutMs:
+          type: integer
+        retryCount:
+          type: integer
+        retrieval:
+          $ref: "#/components/schemas/RetrievalSettings"
+        featureFlags:
+          $ref: "#/components/schemas/AiFeatureFlags"
+        revision:
+          type: integer
+        updatedAt:
+          type: string
+          format: date-time
+
+    IntegrationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [integration, readiness]
+          properties:
+            integration:
+              $ref: "#/components/schemas/IntegrationSettings"
+            readiness:
+              $ref: "#/components/schemas/AiReadiness"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    IntegrationUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+        - name
+        - provider
+        - chatModel
+        - embeddingProvider
+        - embeddingModel
+        - strictGrounding
+        - maxResponseTokens
+        - temperature
+        - timeoutMs
+        - retryCount
+        - retrieval
+        - featureFlags
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+          minLength: 3
+          maxLength: 150
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 50
+        chatModel:
+          type: string
+          minLength: 1
+          maxLength: 100
+        embeddingProvider:
+          type: string
+          minLength: 1
+          maxLength: 50
+        embeddingModel:
+          type: string
+          minLength: 1
+          maxLength: 100
+        embeddingDimensions:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 10000
+        secretReference:
+          type: [string, "null"]
+          maxLength: 500
+          description: Opaque secret-manager reference, not the API key value.
+          pattern: "^(env|vault|aws-secretsmanager|gcp-secretmanager|azure-keyvault)://"
+        strictGrounding:
+          type: boolean
+          const: true
+        maxResponseTokens:
+          type: integer
+          minimum: 50
+          maximum: 2000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+        timeoutMs:
+          type: integer
+          minimum: 500
+          maximum: 60000
+        retryCount:
+          type: integer
+          minimum: 0
+          maximum: 3
+        retrieval:
+          $ref: "#/components/schemas/RetrievalSettings"
+        featureFlags:
+          $ref: "#/components/schemas/AiFeatureFlags"
+
+    RetrievalSettings:
+      type: object
+      additionalProperties: false
+      required: [topK, finalContextCount, minimumSimilarity, maximumContextTokens, keywordSearchEnabled, rerankerEnabled]
+      properties:
+        topK:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+        finalContextCount:
+          type: integer
+          minimum: 1
+          maximum: 10
+        minimumSimilarity:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+          description: Null until evaluated against the approved dataset.
+        maximumContextTokens:
+          type: [integer, "null"]
+          minimum: 1
+        keywordSearchEnabled:
+          type: boolean
+          default: false
+        rerankerEnabled:
+          type: boolean
+          default: false
+
+    AiFeatureFlags:
+      type: object
+      additionalProperties: false
+      required: [documentUpload, autoHandoff, analytics]
+      properties:
+        documentUpload:
+          type: boolean
+        autoHandoff:
+          type: boolean
+        analytics:
+          type: boolean
+
+    AiDependencyState:
+      type: string
+      enum: [reachable, unreachable, not_configured, not_instrumented]
+
+    AiReadiness:
+      type: object
+      additionalProperties: false
+      required: [effectiveEnabled, blockers, dependencies, publishedPromptConfigured]
+      properties:
+        effectiveEnabled:
+          type: boolean
+          const: false
+        blockers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, message]
+            properties:
+              code:
+                type: string
+              message:
+                type: string
+        dependencies:
+          type: object
+          additionalProperties: false
+          required: [vectorStore, queue, objectStorage, chatProvider, embeddingProvider, checkedAt]
+          properties:
+            vectorStore:
+              $ref: "#/components/schemas/AiDependencyState"
+            queue:
+              $ref: "#/components/schemas/AiDependencyState"
+            objectStorage:
+              $ref: "#/components/schemas/AiDependencyState"
+            chatProvider:
+              $ref: "#/components/schemas/AiDependencyState"
+            embeddingProvider:
+              $ref: "#/components/schemas/AiDependencyState"
+            checkedAt:
+              type: string
+              format: date-time
+        publishedPromptConfigured:
+          type: boolean
+
+    ActivationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, acknowledgement]
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        acknowledgement:
+          type: string
+          const: ACTIVATE_STRICT_GROUNDED_AI
+
+    DeactivationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, reason]
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    PublishRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, changeReason]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        changeReason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    ConnectionTestResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [chatProvider, embeddingProvider, testedAt]
+          properties:
+            chatProvider:
+              type: string
+              enum: [reachable, unreachable, invalid_configuration]
+            embeddingProvider:
+              type: string
+              enum: [reachable, unreachable, invalid_configuration]
+            testedAt:
+              type: string
+              format: date-time
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    PromptStatus:
+      type: string
+      enum: [draft, review, approved, published, archived]
+
+    Prompt:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenantId
+        - name
+        - version
+        - status
+        - primaryLanguage
+        - tone
+        - systemInstruction
+        - fallbackMessage
+        - handoffMessage
+        - disclaimerText
+        - maxAnswerLength
+        - createdBy
+        - approvedBy
+        - createdAt
+        - approvedAt
+        - publishedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+        status:
+          $ref: "#/components/schemas/PromptStatus"
+        primaryLanguage:
+          type: string
+        tone:
+          type: string
+        systemInstruction:
+          type: string
+        fallbackMessage:
+          type: string
+        handoffMessage:
+          type: string
+        disclaimerText:
+          type: [string, "null"]
+        maxAnswerLength:
+          type: integer
+        createdBy:
+          type: string
+          format: uuid
+        approvedBy:
+          type: [string, "null"]
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: [string, "null"]
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+
+    PromptCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - primaryLanguage
+        - tone
+        - systemInstruction
+        - fallbackMessage
+        - handoffMessage
+        - maxAnswerLength
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 150
+        primaryLanguage:
+          type: string
+          maxLength: 20
+          default: id
+        tone:
+          type: string
+          maxLength: 50
+        systemInstruction:
+          type: string
+          minLength: 50
+          maxLength: 30000
+        fallbackMessage:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        handoffMessage:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        disclaimerText:
+          type: [string, "null"]
+          maxLength: 2000
+        maxAnswerLength:
+          type: integer
+          minimum: 50
+          maximum: 4000
+
+    PromptResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Prompt"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    PromptListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Prompt"
+        meta:
+          type: object
+          additionalProperties: false
+          required: [requestId, generatedAt, nextCursor]
+          properties:
+            requestId:
+              type: string
+            generatedAt:
+              type: string
+              format: date-time
+            nextCursor:
+              type: [string, "null"]
+
+    Category:
+      type: object
+      additionalProperties: false
+      required: [id, tenantId, name, slug, description, active, sortOrder, revision, knowledgeCount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: [string, "null"]
+        active:
+          type: boolean
+        sortOrder:
+          type: integer
+        revision:
+          type: integer
+          minimum: 1
+        knowledgeCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CategoryWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug, active, sortOrder]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 150
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 150
+        description:
+          type: [string, "null"]
+          maxLength: 2000
+        active:
+          type: boolean
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        expectedRevision:
+          type: integer
+          minimum: 1
+
+    CategoryUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/CategoryWriteRequest"
+        - type: object
+          required: [expectedRevision]
+          properties:
+            expectedRevision:
+              type: integer
+              minimum: 1
+
+    CategoryResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Category"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    CategoryListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Category"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    KnowledgeStatus:
+      type: string
+      enum: [draft, review, approved, published, archived]
+
+    KnowledgeSourceType:
+      type: string
+      enum: [faq, article]
+
+    KnowledgeItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenantId
+        - categoryId
+        - categoryName
+        - sourceType
+        - versionId
+        - version
+        - revision
+        - status
+        - title
+        - question
+        - questionVariants
+        - content
+        - sourceReference
+        - internalNotes
+        - tags
+        - metadata
+        - contentFingerprint
+        - requiresDisclaimer
+        - priority
+        - validFrom
+        - validUntil
+        - expired
+        - createdBy
+        - approvedBy
+        - publishedBy
+        - changeReason
+        - createdAt
+        - updatedAt
+        - approvedAt
+        - publishedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        categoryId:
+          type: [string, "null"]
+          format: uuid
+        categoryName:
+          type: [string, "null"]
+        sourceType:
+          $ref: "#/components/schemas/KnowledgeSourceType"
+        versionId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        revision:
+          type: integer
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/KnowledgeStatus"
+        title:
+          type: string
+        question:
+          type: [string, "null"]
+        questionVariants:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+        content:
+          type: string
+        sourceReference:
+          type: [string, "null"]
+        internalNotes:
+          type: [string, "null"]
+        tags:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        contentFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        requiresDisclaimer:
+          type: boolean
+        priority:
+          type: integer
+        validFrom:
+          type: [string, "null"]
+          format: date-time
+        validUntil:
+          type: [string, "null"]
+          format: date-time
+        expired:
+          type: boolean
+        createdBy:
+          type: string
+          format: uuid
+        approvedBy:
+          type: [string, "null"]
+          format: uuid
+        publishedBy:
+          type: [string, "null"]
+          format: uuid
+        changeReason:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        approvedAt:
+          type: [string, "null"]
+          format: date-time
+        publishedAt:
+          type: [string, "null"]
+          format: date-time
+
+    KnowledgeWriteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - sourceType
+        - content
+        - requiresDisclaimer
+        - priority
+        - questionVariants
+        - tags
+        - metadata
+      properties:
+        categoryId:
+          type: [string, "null"]
+          format: uuid
+        title:
+          type: string
+          minLength: 3
+          maxLength: 255
+        sourceType:
+          $ref: "#/components/schemas/KnowledgeSourceType"
+        question:
+          type: [string, "null"]
+          maxLength: 2000
+        content:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        sourceReference:
+          type: [string, "null"]
+          maxLength: 2000
+        internalNotes:
+          type: [string, "null"]
+          maxLength: 5000
+        tags:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9_-]{0,49}$"
+        metadata:
+          type: object
+          additionalProperties: true
+        requiresDisclaimer:
+          type: boolean
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 100
+        validFrom:
+          type: [string, "null"]
+          format: date-time
+        validUntil:
+          type: [string, "null"]
+          format: date-time
+        questionVariants:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+
+    KnowledgeUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, expectedRevision, knowledge]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        expectedRevision:
+          type: integer
+          minimum: 1
+        knowledge:
+          $ref: "#/components/schemas/KnowledgeWriteRequest"
+
+    KnowledgeLifecycleRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, expectedRevision, reason]
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 1
+        expectedRevision:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    KnowledgeBulkActionRequest:
+      type: object
+      additionalProperties: false
+      required: [itemIds, action, reason]
+      properties:
+        itemIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        action:
+          type: string
+          enum: [publish, archive]
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    KnowledgeResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/KnowledgeItem"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    KnowledgeListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeItem"
+        meta:
+          type: object
+          additionalProperties: false
+          required: [requestId, generatedAt, nextCursor]
+          properties:
+            requestId:
+              type: string
+            generatedAt:
+              type: string
+              format: date-time
+            nextCursor:
+              type: [string, "null"]
+
+    KnowledgeBulkResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeItem"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    DocumentStatus:
+      type: string
+      enum: [uploaded, queued, extracting, cleaning, chunking, embedding, ready, failed, archived]
+
+    KnowledgeDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenantId
+        - categoryId
+        - categoryName
+        - filename
+        - mimeType
+        - extension
+        - fileSize
+        - contentSha256
+        - status
+        - processingRevision
+        - attemptCount
+        - extractedCharacterCount
+        - pageCount
+        - totalChunks
+        - errorCode
+        - errorMessage
+        - uploadedBy
+        - uploadedByName
+        - createdAt
+        - updatedAt
+        - processedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        categoryId:
+          type: [string, "null"]
+          format: uuid
+        categoryName:
+          type: [string, "null"]
+        filename:
+          type: string
+        mimeType:
+          type: string
+        extension:
+          type: string
+          enum: [pdf, docx, txt, md, csv]
+        fileSize:
+          type: integer
+          minimum: 1
+        contentSha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        status:
+          $ref: "#/components/schemas/DocumentStatus"
+        processingRevision:
+          type: integer
+          minimum: 0
+        attemptCount:
+          type: integer
+          minimum: 0
+        extractedCharacterCount:
+          type: integer
+          minimum: 0
+        pageCount:
+          type: [integer, "null"]
+          minimum: 1
+        totalChunks:
+          type: integer
+          minimum: 0
+        errorCode:
+          type: [string, "null"]
+        errorMessage:
+          type: [string, "null"]
+        uploadedBy:
+          type: string
+          format: uuid
+        uploadedByName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        processedAt:
+          type: [string, "null"]
+          format: date-time
+
+    DocumentResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/KnowledgeDocument"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    DocumentListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeDocument"
+        meta:
+          allOf:
+            - $ref: "#/components/schemas/ResponseMeta"
+            - type: object
+              required: [nextCursor]
+              properties:
+                nextCursor:
+                  type: [string, "null"]
+
+    KnowledgeChunkPreview:
+      type: object
+      additionalProperties: false
+      required: [id, chunkIndex, title, section, content, tokenCount, status, embeddingModel, metadata]
+      properties:
+        id:
+          type: string
+          format: uuid
+        chunkIndex:
+          type: integer
+          minimum: 0
+        title:
+          type: [string, "null"]
+        section:
+          type: [string, "null"]
+        content:
+          type: string
+        tokenCount:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [active, inactive, failed]
+        embeddingModel:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    DocumentPreviewResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [document, extractionPreview, chunks]
+          properties:
+            document:
+              $ref: "#/components/schemas/KnowledgeDocument"
+            extractionPreview:
+              type: [string, "null"]
+            chunks:
+              type: array
+              maxItems: 10
+              items:
+                $ref: "#/components/schemas/KnowledgeChunkPreview"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    KnowledgeReindexResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [knowledgeId, queued]
+          properties:
+            knowledgeId:
+              type: string
+              format: uuid
+            queued:
+              type: boolean
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    KnowledgeSearchTestResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [chunkId, title, section, content, score, sourceType, documentId, knowledgeVersionId]
+            properties:
+              chunkId:
+                type: string
+                format: uuid
+              title:
+                type: [string, "null"]
+              section:
+                type: [string, "null"]
+              content:
+                type: string
+              score:
+                type: number
+              sourceType:
+                type: string
+              documentId:
+                type: [string, "null"]
+                format: uuid
+              knowledgeVersionId:
+                type: [string, "null"]
+                format: uuid
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    PlaygroundRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        recentContext:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+            maxLength: 1000
+        promptVersionId:
+          type: [string, "null"]
+          format: uuid
+
+    AnswerStatus:
+      type: string
+      enum: [supported, partially_supported, unsupported, safety_fallback, admin_required]
+
+    UsedKnowledge:
+      type: object
+      additionalProperties: false
+      required:
+        - chunkId
+        - title
+        - section
+        - sourceType
+        - documentId
+        - knowledgeVersionId
+        - score
+        - rank
+        - usedInPrompt
+        - usedInAnswer
+      properties:
+        chunkId:
+          type: string
+          format: uuid
+        title:
+          type: [string, "null"]
+        section:
+          type: [string, "null"]
+        sourceType:
+          type: string
+        documentId:
+          type: [string, "null"]
+          format: uuid
+        knowledgeVersionId:
+          type: [string, "null"]
+          format: uuid
+        score:
+          type: number
+        rank:
+          type: integer
+          minimum: 1
+        usedInPrompt:
+          type: boolean
+        usedInAnswer:
+          type: boolean
+
+    ChatResult:
+      type: object
+      additionalProperties: false
+      required:
+        - conversationId
+        - reply
+        - answerStatus
+        - requiresDisclaimer
+        - customerInterest
+        - handoff
+        - handoffReason
+        - usedKnowledge
+        - retrievedKnowledge
+        - traceId
+        - model
+        - promptVersionId
+        - inputTokens
+        - outputTokens
+        - retrievalLatencyMs
+        - providerLatencyMs
+        - latencyMs
+        - validationStatus
+        - providerCalled
+        - idempotentReplay
+        - safetyCategory
+        - safetyFlags
+        - fallbackReason
+        - outputValidationReasons
+        - interestConfidence
+        - historyMessagesUsed
+        - handoffId
+        - handoffCreated
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        reply:
+          type: string
+        answerStatus:
+          $ref: "#/components/schemas/AnswerStatus"
+        requiresDisclaimer:
+          type: boolean
+        customerInterest:
+          type: boolean
+        handoff:
+          type: boolean
+        handoffReason:
+          type: [string, "null"]
+        usedKnowledge:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsedKnowledge"
+        retrievedKnowledge:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsedKnowledge"
+        traceId:
+          type: string
+          format: uuid
+        model:
+          type: [string, "null"]
+        promptVersionId:
+          type: [string, "null"]
+          format: uuid
+        inputTokens:
+          type: integer
+          minimum: 0
+        outputTokens:
+          type: integer
+          minimum: 0
+        retrievalLatencyMs:
+          type: integer
+          minimum: 0
+        providerLatencyMs:
+          type: integer
+          minimum: 0
+        latencyMs:
+          type: integer
+          minimum: 0
+        validationStatus:
+          type: string
+          enum: [validated, no_context, provider_error, invalid_output]
+        providerCalled:
+          type: boolean
+        idempotentReplay:
+          type: boolean
+        safetyCategory:
+          type: string
+          enum: [emergency, medical_personal, diagnosis_request, medication_dosage, stop_treatment, prompt_injection, explicit_admin, normal_faq]
+        safetyFlags:
+          type: array
+          items:
+            type: string
+        fallbackReason:
+          type: [string, "null"]
+        outputValidationReasons:
+          type: array
+          items:
+            type: string
+        interestConfidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        historyMessagesUsed:
+          type: integer
+          minimum: 0
+          maximum: 10
+        handoffId:
+          type: [string, "null"]
+          format: uuid
+        handoffCreated:
+          type: boolean
+
+    ChatResultResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/ChatResult"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    ConversationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - contactId
+        - customer
+        - channel
+        - channelSessionId
+        - status
+        - topic
+        - interested
+        - summary
+        - lastKnowledgeIds
+        - handoffStatus
+        - traceCount
+        - fallbackCount
+        - handoff
+        - lastAnswerStatus
+        - lastModel
+        - lastTraceId
+        - reviewedBy
+        - startedAt
+        - lastMessageAt
+        - closedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+        customer:
+          type: object
+          additionalProperties: false
+          required: [displayName, maskedIdentifier]
+          properties:
+            displayName: { type: [string, "null"] }
+            maskedIdentifier: { type: string }
+        channel:
+          type: string
+          enum: [whatsapp, playground]
+        channelSessionId: { type: string }
+        status:
+          type: string
+          enum: [active, handed_off, closed]
+        topic: { type: [string, "null"] }
+        interested: { type: boolean }
+        summary: { type: [string, "null"] }
+        lastKnowledgeIds: { type: array, items: { type: string } }
+        handoffStatus: { type: [string, "null"] }
+        traceCount: { type: integer, minimum: 0 }
+        fallbackCount: { type: integer, minimum: 0 }
+        handoff: { type: boolean }
+        lastAnswerStatus: { type: [string, "null"] }
+        lastModel: { type: [string, "null"] }
+        lastTraceId: { type: [string, "null"] }
+        reviewedBy: { type: [string, "null"] }
+        startedAt: { type: string, format: date-time }
+        lastMessageAt: { type: string, format: date-time }
+        closedAt: { type: [string, "null"], format: date-time }
+
+    ConversationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/ConversationSummary"
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    ConversationListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationSummary"
+        meta: { $ref: "#/components/schemas/CursorResponseMeta" }
+
+    ConversationMessage:
+      type: object
+      additionalProperties: false
+      required: [id, sourceMessageId, responseMessageId, customerMessage,
+        assistantMessage, answerStatus, validationStatus, fallbackReason,
+        safetyCategory, handoff, requiresDisclaimer, model, promptVersionId,
+        inputTokens, outputTokens, retrievalLatencyMs, providerLatencyMs,
+        latencyMs, traceId, sources, feedback, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceMessageId: { type: string }
+        responseMessageId: { type: [string, "null"] }
+        customerMessage: { type: string, description: Available only to ai.logs.read roles. }
+        assistantMessage: { type: [string, "null"] }
+        answerStatus: { $ref: "#/components/schemas/AnswerStatus" }
+        validationStatus: { type: string }
+        fallbackReason: { type: [string, "null"] }
+        safetyCategory: { type: string }
+        handoff: { type: boolean }
+        requiresDisclaimer: { type: boolean }
+        model: { type: [string, "null"] }
+        promptVersionId: { type: [string, "null"], format: uuid }
+        inputTokens: { type: integer, minimum: 0 }
+        outputTokens: { type: integer, minimum: 0 }
+        retrievalLatencyMs: { type: integer, minimum: 0 }
+        providerLatencyMs: { type: integer, minimum: 0 }
+        latencyMs: { type: integer, minimum: 0 }
+        traceId: { type: string }
+        sources: { type: array, items: { $ref: "#/components/schemas/UsedKnowledge" } }
+        feedback:
+          oneOf:
+            - $ref: "#/components/schemas/Feedback"
+            - type: "null"
+        createdAt: { type: string, format: date-time }
+
+    ConversationMessageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConversationMessage"
+        meta: { $ref: "#/components/schemas/CursorResponseMeta" }
+
+    Feedback:
+      type: object
+      additionalProperties: false
+      required: [id, type, comment, correctKnowledgeIds, suggestedAnswer, reviewerId, reviewedAt]
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [correct, incorrect, incomplete, unsafe, wrong_source, too_long, too_promotional]
+        comment: { type: [string, "null"] }
+        correctKnowledgeIds: { type: array, items: { type: string, format: uuid } }
+        suggestedAnswer: { type: [string, "null"] }
+        reviewerId: { type: string, format: uuid }
+        reviewedAt: { type: [string, "null"], format: date-time }
+
+    FeedbackWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [correct, incorrect, incomplete, unsafe, wrong_source, too_long, too_promotional]
+        comment: { type: [string, "null"], maxLength: 2000 }
+        correctKnowledgeIds: { type: array, maxItems: 20, items: { type: string, format: uuid } }
+        suggestedAnswer: { type: [string, "null"], maxLength: 4096 }
+
+    FeedbackResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/Feedback" }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    UnansweredQuestion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sampleQuestion
+        - normalizedQuestion
+        - occurrenceCount
+        - bestSimilarity
+        - nearestKnowledgeIds
+        - predictedCategoryId
+        - predictedCategoryName
+        - status
+        - reviewedBy
+        - resolvedKnowledgeItemId
+        - reviewNote
+        - conversationIds
+        - firstSeenAt
+        - lastSeenAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        sampleQuestion:
+          type: string
+        normalizedQuestion: { type: string }
+        occurrenceCount:
+          type: integer
+          minimum: 1
+        bestSimilarity:
+          type: [number, "null"]
+        nearestKnowledgeIds: { type: array, items: { type: string } }
+        predictedCategoryId:
+          type: [string, "null"]
+          format: uuid
+        predictedCategoryName: { type: [string, "null"] }
+        status:
+          type: string
+          enum: [new, reviewing, knowledge_created, resolved, ignored]
+        reviewedBy:
+          type: [string, "null"]
+          format: uuid
+        resolvedKnowledgeItemId:
+          type: [string, "null"]
+          format: uuid
+        reviewNote: { type: [string, "null"] }
+        conversationIds: { type: array, items: { type: string, format: uuid } }
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    UnansweredUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [new, reviewing, knowledge_created, resolved, ignored]
+        predictedCategoryId:
+          type: [string, "null"]
+          format: uuid
+        resolvedKnowledgeItemId:
+          type: [string, "null"]
+          format: uuid
+        reviewNote: { type: [string, "null"], maxLength: 2000 }
+
+    UnansweredResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/UnansweredQuestion"
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    UnansweredListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnansweredQuestion"
+        meta: { $ref: "#/components/schemas/CursorResponseMeta" }
+
+    CreateKnowledgeFromUnansweredRequest:
+      type: object
+      additionalProperties: false
+      required: [answer]
+      properties:
+        title: { type: string, maxLength: 255 }
+        answer: { type: string, minLength: 1, maxLength: 20000 }
+        categoryId: { type: [string, "null"], format: uuid }
+        requiresDisclaimer: { type: boolean, default: false }
+
+    UnansweredKnowledgeResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [unanswered, knowledge]
+          properties:
+            unanswered: { $ref: "#/components/schemas/UnansweredQuestion" }
+            knowledge: { $ref: "#/components/schemas/KnowledgeItem" }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    TestCaseWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [name, question]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        question: { type: string, minLength: 1, maxLength: 4096 }
+        recentContext: { type: array, maxItems: 10, items: { type: string, maxLength: 1000 } }
+        promptVersionId: { type: [string, "null"], format: uuid }
+        expectedCategory: { type: [string, "null"], maxLength: 50 }
+        expectedKnowledgeIds: { type: array, maxItems: 20, items: { type: string } }
+        mustContain: { type: array, maxItems: 20, items: { type: string } }
+        mustNotContain: { type: array, maxItems: 20, items: { type: string } }
+        expectedHandoff: { type: [boolean, "null"] }
+        active: { type: boolean, default: true }
+
+    TestRun:
+      type: object
+      additionalProperties: true
+      required: [id, passed, score, checks, answerStatus, answerPreview, traceId, ranAt]
+      properties:
+        id: { type: string, format: uuid }
+        testCaseId: { type: string, format: uuid }
+        passed: { type: boolean }
+        score: { type: number, minimum: 0, maximum: 1 }
+        checks: { type: object, additionalProperties: { type: boolean } }
+        answerStatus: { type: string }
+        answerPreview: { type: string }
+        traceId: { type: string }
+        ranAt: { type: string, format: date-time }
+        result: { $ref: "#/components/schemas/ChatResult" }
+
+    TestCase:
+      allOf:
+        - $ref: "#/components/schemas/TestCaseWriteRequest"
+        - type: object
+          required: [id, active, createdBy, updatedBy, createdAt, updatedAt, runs]
+          properties:
+            id: { type: string, format: uuid }
+            createdBy: { type: string, format: uuid }
+            updatedBy: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            runs: { type: array, maxItems: 2, items: { $ref: "#/components/schemas/TestRun" } }
+
+    TestCaseResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/TestCase" }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+    TestCaseListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/TestCase" } }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+    TestRunResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/TestRun" }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+    TestBatchResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [total, passed, failed, passRate, runs]
+          properties:
+            total: { type: integer, minimum: 0 }
+            passed: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+            passRate: { type: number, minimum: 0, maximum: 1 }
+            runs: { type: array, items: { $ref: "#/components/schemas/TestRun" } }
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
+    AnalyticsResponse:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            - totalQuestions
+            - supportedAnswerRate
+            - fallbackRate
+            - handoffRate
+            - unansweredRate
+            - averageLatencyMs
+          properties:
+            totalQuestions:
+              type: integer
+            supportedAnswerRate:
+              type: number
+            fallbackRate:
+              type: number
+            handoffRate:
+              type: number
+            unansweredRate:
+              type: number
+            averageLatencyMs:
+              type: number
+            tokenUsage:
+              type: [integer, "null"]
+            estimatedCost:
+              type: [number, "null"]
+              description: Null when provider cost instrumentation is unavailable.
+        requestId:
+          $ref: "#/components/schemas/RequestId"
+
+    RuntimeRespondRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - channel
+        - channelSessionId
+        - customerIdentifier
+        - providerMessageId
+        - message
+        - timestamp
+      properties:
+        channel:
+          type: string
+          const: whatsapp
+        channelSessionId:
+          type: string
+          maxLength: 150
+        customerIdentifier:
+          type: string
+          minLength: 1
+          maxLength: 255
+        providerMessageId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        timestamp:
+          type: string
+          format: date-time
+
+    RuntimeHandoffRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceMessageId, reason, priority]
+      properties:
+        sourceMessageId:
+          type: integer
+          minimum: 1
+        conversationId:
+          type: [string, "null"]
+          format: uuid
+        reason:
+          type: string
+          enum:
+            - admin_requested
+            - customer_interested
+            - low_confidence
+            - medical_personal
+            - emergency
+            - provider_failure
+        priority:
+          type: string
+          enum: [normal, high, urgent]
+        summary:
+          type: [string, "null"]
+          maxLength: 4000
+
+    Handoff:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - contactId
+        - sourceMessageId
+        - state
+        - assigneeUserId
+        - dueAt
+        - resolvedAt
+        - resolutionNote
+        - tenantId
+        - aiConversationId
+        - aiMessageTraceId
+        - reason
+        - priority
+        - summary
+        - knowledgeIds
+        - safetyCategory
+        - traceId
+        - createdAt
+        - updatedAt
+        - contact
+        - sourcePreview
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+        sourceMessageId:
+          type: string
+        state:
+          type: string
+          enum: [open, assigned, in_progress, resolved, closed, canceled]
+        assigneeUserId:
+          type: [string, "null"]
+        dueAt:
+          type: [string, "null"]
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+        resolutionNote:
+          type: [string, "null"]
+        tenantId:
+          type: [string, "null"]
+          format: uuid
+        aiConversationId:
+          type: [string, "null"]
+          format: uuid
+        aiMessageTraceId:
+          type: [string, "null"]
+          format: uuid
+        reason:
+          type: [string, "null"]
+        priority:
+          type: string
+          enum: [normal, high]
+        summary:
+          type: [string, "null"]
+        knowledgeIds:
+          type: array
+          items:
+            type: string
+        safetyCategory:
+          type: [string, "null"]
+        traceId:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        contact:
+          type: object
+          additionalProperties: false
+          required: [displayName, maskedPhone]
+          properties:
+            displayName:
+              type: [string, "null"]
+            maskedPhone:
+              type: [string, "null"]
+        sourcePreview:
+          type: string
+
+    HandoffResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Handoff"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    HandoffListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Handoff"
+        meta:
+          type: object
+          additionalProperties: false
+          required: [requestId, generatedAt, nextCursor]
+          properties:
+            requestId:
+              type: string
+            generatedAt:
+              type: string
+              format: date-time
+            nextCursor:
+              type: [string, "null"]
+
+    CursorPage:
+      type: object
+      additionalProperties: false
+      required: [nextCursor, hasMore]
+      properties:
+        nextCursor:
+          type: [string, "null"]
+        hasMore:
+          type: boolean

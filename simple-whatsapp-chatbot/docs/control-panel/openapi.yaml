@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: WhatsApp Chatbot Admin API
-  version: 0.8.0
+  version: 0.9.0
   summary: Admin contract for the WhatsApp control panel
   description: |
-    Sprint 6 adds normalized safety telemetry, durable pause state, traceable
-    safety delays, guarded resume/reset, Prometheus safety metrics, and
-    step-up authenticated WhatsApp credential reset/re-pair.
+    The chatbot editor exposes one active configuration with optimistic
+    concurrency, unsaved-rule preview, atomic save, and audit. Safety controls
+    and one-click WhatsApp credential reset/re-pair remain protected.
     Browser clients authenticate using a secure server-managed session cookie.
+    The canonical detailed contract for /api/admin/v1/ai-chatbot/* Sprint 6
+    operations is maintained in ../ai-chatbot/openapi.yaml.
 servers:
   - url: http://localhost:3000
     description: Local backend
@@ -22,6 +24,7 @@ tags:
   - name: Safety
   - name: Events
   - name: Chatbot
+  - name: AI Chatbot
 security:
   - sessionCookie: []
 
@@ -450,7 +453,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [open, assigned, resolved, canceled]
+            enum: [open, assigned, in_progress, resolved, closed, canceled]
       responses:
         "200":
           description: Handoff page
@@ -462,6 +465,28 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/handoffs/{handoffId}:
+    get:
+      tags: [Handoffs]
+      operationId: getHandoff
+      summary: Return handoff detail including AI safety metadata
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "200":
+          description: Handoff detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/admin/v1/handoffs/{handoffId}/assign:
     post:
@@ -522,6 +547,65 @@ paths:
       responses:
         "200":
           description: Resolved handoff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/handoffs/{handoffId}/in-progress:
+    post:
+      tags: [Handoffs]
+      operationId: startHandoff
+      summary: Mark a claimed handoff in progress
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Updated handoff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/StateConflict"
+
+  /api/admin/v1/handoffs/{handoffId}/close:
+    post:
+      tags: [Handoffs]
+      operationId: closeHandoff
+      summary: Close a completed handoff
+      x-sprint: 5
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [resolutionNote]
+              properties:
+                resolutionNote:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Closed handoff
           content:
             application/json:
               schema:
@@ -598,19 +682,16 @@ paths:
     post:
       tags: [Session]
       operationId: resetWhatsAppSession
-      summary: Delete rejected WhatsApp credentials and start a new QR pairing
+      summary: Delete WhatsApp credentials and start a new QR pairing
       description: |
-        Admin-only destructive recovery for a terminal logged-out or bad-session
-        state. Message history, contacts, chatbot rules, and audit logs are not
-        deleted.
+        Admin-only destructive recovery for a connected session, a
+        logged-out/bad-session state, or a fatal disconnected state. Resetting a
+        connected session closes the active socket before deleting its credentials.
+        Persisted anti-ban safety state, message history, contacts, chatbot rules,
+        and audit logs are not deleted. The authenticated Admin's action is recorded
+        in the audit log; no request body is required.
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SessionResetRequest"
       responses:
         "202":
           description: Credentials reset and pairing startup accepted
@@ -618,8 +699,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SessionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -782,27 +861,28 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/admin/v1/chatbot/versions:
+  /api/admin/v1/chatbot/config:
     get:
       tags: [Chatbot]
-      operationId: listChatbotVersions
-      summary: List draft, active, and archived chatbot versions
+      operationId: getChatbotConfig
+      summary: Read the single active chatbot configuration
       x-sprint: 5
       responses:
         "200":
-          description: Version history
+          description: Active configuration
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatbotVersionListResponse"
+                $ref: "#/components/schemas/ChatbotConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/admin/v1/chatbot/versions/drafts:
-    post:
+    put:
       tags: [Chatbot]
-      operationId: createChatbotDraft
-      summary: Copy the active immutable version into a new draft
+      operationId: updateChatbotConfig
+      summary: Atomically validate, save, and activate the complete rule set
       x-sprint: 5
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -811,51 +891,136 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: false
-              properties:
-                name:
-                  type: string
-                  minLength: 3
-                  maxLength: 150
+              $ref: "#/components/schemas/ChatbotConfigUpdateRequest"
       responses:
-        "201":
-          description: Draft created
+        "200":
+          description: Active configuration with an incremented revision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
+                $ref: "#/components/schemas/ChatbotConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/StateConflict"
 
-  /api/admin/v1/chatbot/versions/{versionId}:
+  /api/admin/v1/ai-chatbot/foundation:
     get:
-      tags: [Chatbot]
-      operationId: getChatbotVersion
-      summary: Read one immutable or draft version with its rules
-      x-sprint: 5
-      parameters:
-        - $ref: "#/components/parameters/ChatbotVersionId"
+      tags: [AI Chatbot]
+      operationId: getAiChatbotFoundation
+      summary: Read the fail-closed Sprint 2 RAG foundation and module roadmap
+      description: |
+        Sprint 2 discovery endpoint. It never returns provider secrets and does
+        not activate customer traffic. Tenant context and granular AI
+        permissions are enforced server-side.
+      x-sprint: 2
       responses:
         "200":
-          description: Version detail
+          description: Current foundation contract and non-secret readiness state
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/AiChatbotFoundationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
-  /api/admin/v1/chatbot/versions/{versionId}/rules:
-    put:
+  /api/admin/v1/ai-chatbot/integration:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1integration"
+
+  /api/admin/v1/ai-chatbot/integration/activate:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1integration~1activate"
+
+  /api/admin/v1/ai-chatbot/integration/deactivate:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1integration~1deactivate"
+
+  /api/admin/v1/ai-chatbot/integration/test-connection:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1integration~1test-connection"
+
+  /api/admin/v1/ai-chatbot/prompts:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1prompts"
+
+  /api/admin/v1/ai-chatbot/prompts/{promptId}/approve:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1prompts~1{promptId}~1approve"
+
+  /api/admin/v1/ai-chatbot/prompts/{promptId}/publish:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1prompts~1{promptId}~1publish"
+
+  /api/admin/v1/ai-chatbot/categories:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1categories"
+
+  /api/admin/v1/ai-chatbot/categories/{categoryId}:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1categories~1{categoryId}"
+
+  /api/admin/v1/ai-chatbot/knowledge:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge"
+
+  /api/admin/v1/ai-chatbot/knowledge/bulk-action:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1bulk-action"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/submit-review:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1submit-review"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/request-revision:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1request-revision"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/approve:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1approve"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/publish:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1publish"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/archive:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1archive"
+
+  /api/admin/v1/ai-chatbot/knowledge/{knowledgeId}/reindex:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1{knowledgeId}~1reindex"
+
+  /api/admin/v1/ai-chatbot/knowledge/search-test:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1knowledge~1search-test"
+
+  /api/admin/v1/ai-chatbot/documents:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents"
+
+  /api/admin/v1/ai-chatbot/documents/upload:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1upload"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1{documentId}"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/preview:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1{documentId}~1preview"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/process:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1{documentId}~1process"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/reprocess:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1{documentId}~1reprocess"
+
+  /api/admin/v1/ai-chatbot/documents/{documentId}/archive:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1documents~1{documentId}~1archive"
+
+  /api/admin/v1/ai-chatbot/playground/test:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1playground~1test"
+
+  /api/admin/v1/ai-chatbot/runtime/respond:
+    $ref: "../ai-chatbot/openapi.yaml#/paths/~1api~1admin~1v1~1ai-chatbot~1runtime~1respond"
+
+  /api/admin/v1/chatbot/test:
+    post:
       tags: [Chatbot]
-      operationId: replaceChatbotDraftRules
-      summary: Atomically validate and replace every rule in a draft
+      operationId: testChatbotRules
+      summary: Preview unsaved candidate rules without activating them
       x-sprint: 5
       parameters:
-        - $ref: "#/components/parameters/ChatbotVersionId"
         - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
@@ -864,52 +1029,17 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [expectedRevision, rules]
+              required: [input, rules]
               properties:
-                expectedRevision:
-                  type: integer
-                  minimum: 0
+                input:
+                  type: string
+                  maxLength: 4096
                 rules:
                   type: array
                   minItems: 1
                   maxItems: 100
                   items:
                     $ref: "#/components/schemas/ChatbotRule"
-      responses:
-        "200":
-          description: Updated draft and incremented revision
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/StateConflict"
-
-  /api/admin/v1/chatbot/test:
-    post:
-      tags: [Chatbot]
-      operationId: testChatbotVersion
-      summary: Evaluate normalized input without sending a WhatsApp message
-      x-sprint: 5
-      parameters:
-        - $ref: "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [input]
-              properties:
-                versionId:
-                  type: string
-                  format: uuid
-                input:
-                  type: string
-                  maxLength: 4096
       responses:
         "200":
           description: Exact normalized match and response preview
@@ -919,60 +1049,10 @@ paths:
                 $ref: "#/components/schemas/ChatbotTestResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
-
-  /api/admin/v1/chatbot/versions/{versionId}/publish:
-    post:
-      tags: [Chatbot]
-      operationId: publishChatbotVersion
-      summary: Atomically replace the active version after explicit confirmation
-      x-sprint: 5
-      parameters:
-        - $ref: "#/components/parameters/ChatbotVersionId"
-        - $ref: "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ChatbotPublishRequest"
-      responses:
-        "200":
-          description: Newly active version
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/StateConflict"
-
-  /api/admin/v1/chatbot/versions/{versionId}/rollback:
-    post:
-      tags: [Chatbot]
-      operationId: rollbackChatbotVersion
-      summary: Restore an exact previously published rule set
-      x-sprint: 5
-      parameters:
-        - $ref: "#/components/parameters/ChatbotVersionId"
-        - $ref: "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ChatbotRollbackRequest"
-      responses:
-        "200":
-          description: Restored active version
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChatbotVersionDetailResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          $ref: "#/components/responses/StateConflict"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
 components:
   securitySchemes:
@@ -980,6 +1060,10 @@ components:
       type: apiKey
       in: cookie
       name: admin_session
+    serviceApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
 
   parameters:
     Cursor:
@@ -1046,14 +1130,6 @@ components:
       schema:
         type: string
         format: uuid
-    ChatbotVersionId:
-      name: versionId
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-
   responses:
     BadRequest:
       description: Request validation failed
@@ -1087,6 +1163,156 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    AiChatbotModule:
+      type: object
+      additionalProperties: false
+      required: [key, label, path, state, targetSprint]
+      properties:
+        key:
+          type: string
+          enum:
+            [overview, knowledge, instructions, playground, conversations,
+             unanswered, handoffs, analytics, settings]
+        label:
+          type: string
+        path:
+          type: string
+          pattern: '^/ai-chatbot/'
+        state:
+          type: string
+          enum: [available, planned]
+        targetSprint:
+          type: integer
+          minimum: 0
+          maximum: 8
+
+    AiChatbotFoundationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required:
+            [apiVersion, phase, status, runtime, tenant, provider,
+             infrastructure, guardrails, modules]
+          properties:
+            apiVersion:
+              const: v1
+            phase:
+              const: sprint_6
+            status:
+              type: string
+              enum: [development_ready, blocked]
+            runtime:
+              type: object
+              additionalProperties: false
+              required:
+                [enabled, customerTraffic, mode, sourceOfTruth, strictGrounding]
+              properties:
+                enabled:
+                  const: false
+                customerTraffic:
+                  const: disabled
+                mode:
+                  const: rag
+                sourceOfTruth:
+                  const: knowledge_base
+                strictGrounding:
+                  type: boolean
+            tenant:
+              type: object
+              additionalProperties: false
+              required: [state, strategy, tenantId]
+              properties:
+                state:
+                  $ref: "#/components/schemas/CapabilityState"
+                strategy:
+                  const: single_tenant_bootstrap
+                tenantId:
+                  type: [string, "null"]
+                  format: uuid
+            provider:
+              type: object
+              additionalProperties: false
+              required:
+                [state, name, chatModel, embeddingModel,
+                 secretReferenceConfigured]
+              properties:
+                state:
+                  $ref: "#/components/schemas/CapabilityState"
+                name:
+                  type: [string, "null"]
+                chatModel:
+                  type: [string, "null"]
+                embeddingModel:
+                  type: [string, "null"]
+                secretReferenceConfigured:
+                  type: boolean
+            infrastructure:
+              type: object
+              additionalProperties: false
+              required: [vectorStore, queue, objectStorage]
+              properties:
+                vectorStore:
+                  type: object
+                  additionalProperties: false
+                  required: [state, adapter]
+                  properties:
+                    state:
+                      $ref: "#/components/schemas/CapabilityState"
+                    adapter:
+                      const: postgresql_pgvector
+                queue:
+                  type: object
+                  additionalProperties: false
+                  required: [state, adapter]
+                  properties:
+                    state:
+                      $ref: "#/components/schemas/CapabilityState"
+                    adapter:
+                      const: redis
+                objectStorage:
+                  type: object
+                  additionalProperties: false
+                  required: [state, adapter]
+                  properties:
+                    state:
+                      $ref: "#/components/schemas/CapabilityState"
+                    adapter:
+                      const: s3_compatible
+            guardrails:
+              type: object
+              additionalProperties: false
+              required:
+                [faqOnly, booking, payments, diagnosis,
+                 personalizedMedicalAdvice, freeGenerationWithoutContext,
+                 fallbackAndHandoff]
+              properties:
+                faqOnly:
+                  const: true
+                booking:
+                  const: false
+                payments:
+                  const: false
+                diagnosis:
+                  const: false
+                personalizedMedicalAdvice:
+                  const: false
+                freeGenerationWithoutContext:
+                  const: false
+                fallbackAndHandoff:
+                  const: true
+            modules:
+              type: array
+              minItems: 9
+              maxItems: 9
+              items:
+                $ref: "#/components/schemas/AiChatbotModule"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
     ChatbotRule:
       type: object
       additionalProperties: false
@@ -1119,95 +1345,48 @@ components:
           type: string
           enum: [reply, create_handoff]
 
-    ChatbotVersion:
+    ChatbotConfig:
       type: object
       additionalProperties: false
-      required:
-        - id
-        - versionNumber
-        - name
-        - status
-        - changeSummary
-        - basedOnVersionId
-        - revision
-        - contentHash
-        - createdBy
-        - publishedBy
-        - createdAt
-        - updatedAt
-        - publishedAt
-        - ruleCount
+      required: [revision, updatedAt, rules]
       properties:
-        id:
-          type: string
-          format: uuid
-        versionNumber:
-          type: integer
-          minimum: 1
-        name:
-          type: string
-        status:
-          type: string
-          enum: [draft, published, archived]
-        changeSummary:
-          type: [string, "null"]
-        basedOnVersionId:
-          type: [string, "null"]
-          format: uuid
         revision:
           type: integer
           minimum: 0
-        contentHash:
-          type: [string, "null"]
-        createdBy:
-          type: [string, "null"]
-          format: uuid
-        publishedBy:
-          type: [string, "null"]
-          format: uuid
-        createdAt:
-          type: string
-          format: date-time
         updatedAt:
           type: string
           format: date-time
-        publishedAt:
-          type: [string, "null"]
-          format: date-time
-        ruleCount:
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ChatbotRule"
+
+    ChatbotConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/ChatbotConfig"
+        meta:
+          $ref: "#/components/schemas/Meta"
+
+    ChatbotConfigUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, rules]
+      properties:
+        expectedRevision:
           type: integer
           minimum: 0
-
-    ChatbotVersionListResponse:
-      type: object
-      additionalProperties: false
-      required: [data, meta]
-      properties:
-        data:
+        rules:
           type: array
+          minItems: 1
+          maxItems: 100
           items:
-            $ref: "#/components/schemas/ChatbotVersion"
-        meta:
-          $ref: "#/components/schemas/Meta"
-
-    ChatbotVersionDetailResponse:
-      type: object
-      additionalProperties: false
-      required: [data, meta]
-      properties:
-        data:
-          type: object
-          additionalProperties: false
-          required: [version, rules]
-          properties:
-            version:
-              $ref: "#/components/schemas/ChatbotVersion"
-            rules:
-              type: array
-              items:
-                $ref: "#/components/schemas/ChatbotRule"
-        meta:
-          $ref: "#/components/schemas/Meta"
+            $ref: "#/components/schemas/ChatbotRule"
 
     ChatbotTestResponse:
       type: object
@@ -1217,22 +1396,15 @@ components:
         data:
           type: object
           additionalProperties: false
-          required:
-            [versionId, versionNumber, normalizedInput, matchedRule, response]
+          required: [normalizedInput, matchedRule, response]
           properties:
-            versionId:
-              type: string
-              format: uuid
-            versionNumber:
-              type: integer
-              minimum: 1
             normalizedInput:
               type: string
             matchedRule:
               type: object
               additionalProperties: false
               required:
-                [id, triggerType, priority, matchedTrigger, action]
+                [triggerType, priority, matchedTrigger, action]
               properties:
                 id:
                   type: string
@@ -1251,38 +1423,6 @@ components:
               type: string
         meta:
           $ref: "#/components/schemas/Meta"
-
-    ChatbotPublishRequest:
-      type: object
-      additionalProperties: false
-      required: [expectedActiveVersionId, changeSummary, confirmation]
-      properties:
-        expectedActiveVersionId:
-          type: string
-          format: uuid
-        changeSummary:
-          type: string
-          minLength: 5
-          maxLength: 500
-        confirmation:
-          type: string
-          const: PUBLISH
-
-    ChatbotRollbackRequest:
-      type: object
-      additionalProperties: false
-      required: [expectedActiveVersionId, reason, confirmation]
-      properties:
-        expectedActiveVersionId:
-          type: string
-          format: uuid
-        reason:
-          type: string
-          minLength: 5
-          maxLength: 500
-        confirmation:
-          type: string
-          const: ROLLBACK
 
     LoginRequest:
       type: object
@@ -2075,6 +2215,15 @@ components:
         - dueAt
         - resolvedAt
         - resolutionNote
+        - tenantId
+        - aiConversationId
+        - aiMessageTraceId
+        - reason
+        - priority
+        - summary
+        - knowledgeIds
+        - safetyCategory
+        - traceId
         - createdAt
         - updatedAt
         - contact
@@ -2089,7 +2238,7 @@ components:
           type: string
         state:
           type: string
-          enum: [open, assigned, resolved, canceled]
+          enum: [open, assigned, in_progress, resolved, closed, canceled]
         assigneeUserId:
           type: [string, "null"]
           format: uuid
@@ -2100,6 +2249,30 @@ components:
           type: [string, "null"]
           format: date-time
         resolutionNote:
+          type: [string, "null"]
+        tenantId:
+          type: [string, "null"]
+          format: uuid
+        aiConversationId:
+          type: [string, "null"]
+          format: uuid
+        aiMessageTraceId:
+          type: [string, "null"]
+          format: uuid
+        reason:
+          type: [string, "null"]
+        priority:
+          type: string
+          enum: [normal, high]
+        summary:
+          type: [string, "null"]
+        knowledgeIds:
+          type: array
+          items:
+            type: string
+        safetyCategory:
+          type: [string, "null"]
+        traceId:
           type: [string, "null"]
         createdAt:
           type: string
@@ -2569,23 +2742,6 @@ components:
           type: string
           minLength: 5
           maxLength: 500
-
-    SessionResetRequest:
-      type: object
-      additionalProperties: false
-      required: [reason, currentPassword, confirmation]
-      properties:
-        reason:
-          type: string
-          minLength: 5
-          maxLength: 500
-        currentPassword:
-          type: string
-          writeOnly: true
-          maxLength: 256
-        confirmation:
-          type: string
-          enum: [RESET_WHATSAPP_SESSION]
 
     SafetyResumeRequest:
       type: object

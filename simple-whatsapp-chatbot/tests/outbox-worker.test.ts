@@ -65,13 +65,27 @@ describe('OutboxWorker delivery safety', () => {
     expect(outbox.defer).not.toHaveBeenCalled();
   });
 
-  it('uses backoff without a provider call while WhatsApp is disconnected', async () => {
+  it('does not lease or consume an attempt while WhatsApp is disconnected', async () => {
     const { worker, outbox, sender } = createHarness({
       status: 'disconnected'
     });
 
     await worker.tick();
 
+    expect(sender.sendText).not.toHaveBeenCalled();
+    expect(outbox.claimNext).not.toHaveBeenCalled();
+    expect(outbox.defer).not.toHaveBeenCalled();
+  });
+
+  it('releases a claimed item if WhatsApp disconnects during the claim race', async () => {
+    const { worker, outbox, sender } = createHarness();
+    sender.getStatus
+      .mockReturnValueOnce('connected')
+      .mockReturnValue('disconnected');
+
+    await worker.tick();
+
+    expect(outbox.claimNext).toHaveBeenCalledOnce();
     expect(sender.sendText).not.toHaveBeenCalled();
     expect(outbox.defer).toHaveBeenCalledWith(
       item,

@@ -7,51 +7,45 @@ tanpa mengedit source code.
 
 ## Delivered
 
-- PostgreSQL-backed `chatbot_rule_versions` dan `chatbot_rules`.
-- Seed version 1 dari rule hardcoded; menu 3 selaras dengan lokasi dan menu 4
-  selaras dengan reservasi.
-- Active runtime hanya membaca version `published`, dengan warm cache dan
+- PostgreSQL-backed active configuration dan `chatbot_rules`. Tabel version
+  lama tetap dipakai sebagai compatibility storage, tetapi lifecycle-nya tidak
+  lagi diekspos oleh aplikasi.
+- Seed konfigurasi awal dari rule hardcoded; menu 3 selaras dengan lokasi dan
+  menu 4 selaras dengan reservasi.
+- Runtime hanya membaca satu konfigurasi aktif, dengan warm cache dan
   last-known-good cache saat database sementara gagal.
 - Rule validation untuk normalized trigger, duplicate trigger/priority, empty,
   fallback, response length, action, dan batas jumlah rule.
-- Draft copy, optimistic revision, immutable published rules, atomic publish,
-  active-version conflict detection, rollback exact, dan cache invalidation.
-- Incoming/outgoing chatbot message menyimpan active version/rule ID pada
-  metadata; action `create_handoff` mengikuti rule, bukan hardcoded input.
+- Full-set save atomik, optimistic revision conflict, hash, dan cache
+  invalidation. Tidak ada draft, publish, history, atau rollback.
+- Incoming/outgoing chatbot message menyimpan revision/rule ID pada metadata;
+  action `create_handoff` mengikuti rule, bukan hardcoded input.
+- Respons kontak pertama berasal dari rule pesan awal (`empty`) yang aktif,
+  bukan string hardcoded atau alias khusus.
 - Admin API terautentikasi + CSRF + `chatbot.manage`:
-  - `GET /api/admin/v1/chatbot/versions`
-  - `POST /api/admin/v1/chatbot/versions/drafts`
-  - `GET /api/admin/v1/chatbot/versions/:versionId`
-  - `PUT /api/admin/v1/chatbot/versions/:versionId/rules`
+  - `GET /api/admin/v1/chatbot/config`
+  - `PUT /api/admin/v1/chatbot/config`
   - `POST /api/admin/v1/chatbot/test`
-  - `POST /api/admin/v1/chatbot/versions/:versionId/publish`
-  - `POST /api/admin/v1/chatbot/versions/:versionId/rollback`
-- Audit event untuk create/edit/publish/rollback; publish dan rollback
-  membutuhkan summary/reason dan exact phrase confirmation.
-- React page `/chatbot/rules`: version history, editor, local validation,
-  dry-run console, diff summary, publish, dan rollback.
-- Production API contract `0.6.0`, frontend Zod contracts, dan mock workflow.
+- Audit intent durable dan outcome untuk setiap update konfigurasi.
+- React page `/chatbot/rules`: satu editor langsung dengan local validation,
+  preview perubahan yang belum disimpan, batalkan perubahan, dan tombol
+  `Simpan & aktifkan`.
+- Production API contract `0.9.0`, frontend Zod contracts, dan mock workflow.
 
 ## Verification
 
-- Backend `npm run check`: **11 files / 82 tests passed**, typecheck dan build
-  passed.
-- Frontend `npm run check`: **10 files / 24 tests passed**, lint, typecheck,
-  test, dan production build passed.
-- PostgreSQL migration applied successfully against local Postgres 16.
-- Database smoke:
-  - draft isolation: passed;
-  - concurrent/stale active publish conflict: passed;
-  - publish activation: passed;
-  - rollback restores exact response: passed;
-  - temporary smoke version removed.
+- Backend `npm run check`: typecheck, full test suite, dan build passed.
+- Frontend `npm run check`: lint, typecheck, full test suite, dan production
+  build passed.
+- Atomic replacement, stale revision conflict, unsaved preview, removed routes,
+  dan first-contact active greeting memiliki automated coverage.
 
 ## Security boundary
 
 - Viewer dan Operator tidak memiliki mutation permission.
-- Published/archived rules tidak dapat diedit.
+- Hanya konfigurasi aktif yang dapat dibaca atau diubah melalui API.
 - Preview tidak mengirim pesan ke WhatsApp.
-- Raw rule response tidak disalin ke audit state; audit menyimpan version,
-  revision, count, dan content hash.
-- Publish/rollback dilakukan dalam transaction dan tidak dapat menghasilkan dua
-  active versions.
+- Raw rule response tidak disalin ke audit state; audit menyimpan revision,
+  count, dan content hash.
+- Seluruh rule diganti dalam satu transaction; stale revision ditolak sebelum
+  rule aktif dihapus.

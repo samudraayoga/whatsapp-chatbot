@@ -80,6 +80,12 @@ export class OutboxWorker {
         );
         return;
       }
+      // Do not lease an item while the provider is unavailable. Claiming here
+      // consumes an attempt even though no send was made, which can exhaust an
+      // outbox item during startup or a WhatsApp outage.
+      if (this.sender.getStatus() !== 'connected') {
+        return;
+      }
       const item = await this.outbox.claimNext(this.workerId, this.leaseMs);
       if (!item) return;
       await this.process(item);
@@ -104,12 +110,13 @@ export class OutboxWorker {
       );
       return;
     }
+    // The connection can drop after the pre-claim readiness check. In that
+    // narrow race, release the lease without attempting a provider send.
     if (this.sender.getStatus() !== 'connected') {
       const delay = this.retryBaseMs * 2 ** Math.max(0, item.attempt - 1);
       await this.outbox.defer(item, 'WHATSAPP_NOT_READY', delay);
       return;
     }
-
     try {
       const sent = await this.sender.sendText(item.jid, item.text);
       await this.outbox.complete(item, sent?.key.id ?? null);

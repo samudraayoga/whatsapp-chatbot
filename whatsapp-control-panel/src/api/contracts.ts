@@ -419,11 +419,20 @@ export const handoffSchema = z.object({
   id: z.string().uuid(),
   contactId: z.string(),
   sourceMessageId: z.string(),
-  state: z.enum(['open', 'assigned', 'resolved', 'canceled']),
+  state: z.enum(['open', 'assigned', 'in_progress', 'resolved', 'closed', 'canceled']),
   assigneeUserId: z.string().nullable(),
   dueAt: z.string().datetime().nullable(),
   resolvedAt: z.string().datetime().nullable(),
   resolutionNote: z.string().nullable(),
+  tenantId: z.string().uuid().nullable(),
+  aiConversationId: z.string().uuid().nullable(),
+  aiMessageTraceId: z.string().uuid().nullable(),
+  reason: z.string().nullable(),
+  priority: z.enum(['normal', 'high']),
+  summary: z.string().nullable(),
+  knowledgeIds: z.array(z.string()),
+  safetyCategory: z.string().nullable(),
+  traceId: z.string().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   contact: z.object({
@@ -565,33 +574,12 @@ export const chatbotRuleSchema = z.object({
   action: z.enum(['reply', 'create_handoff'])
 });
 
-export const chatbotVersionSchema = z.object({
-  id: z.string().uuid(),
-  versionNumber: z.number().int().positive(),
-  name: z.string(),
-  status: z.enum(['draft', 'published', 'archived']),
-  changeSummary: z.string().nullable(),
-  basedOnVersionId: z.string().uuid().nullable(),
-  revision: z.number().int().nonnegative(),
-  contentHash: z.string().nullable(),
-  createdBy: z.string().nullable(),
-  publishedBy: z.string().nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  publishedAt: z.string().datetime().nullable(),
-  ruleCount: z.number().int().nonnegative()
-});
-
 const responseMetaSchema = cursorMetaSchema.omit({ nextCursor: true });
 
-export const chatbotVersionListResponseSchema = z.object({
-  data: z.array(chatbotVersionSchema),
-  meta: responseMetaSchema
-});
-
-export const chatbotVersionDetailResponseSchema = z.object({
+export const chatbotConfigResponseSchema = z.object({
   data: z.object({
-    version: chatbotVersionSchema,
+    revision: z.number().int().nonnegative(),
+    updatedAt: z.string().datetime(),
     rules: z.array(chatbotRuleSchema)
   }),
   meta: responseMetaSchema
@@ -599,18 +587,565 @@ export const chatbotVersionDetailResponseSchema = z.object({
 
 export const chatbotTestResponseSchema = z.object({
   data: z.object({
-    versionId: z.string().uuid(),
-    versionNumber: z.number().int().positive(),
     normalizedInput: z.string(),
-    matchedRule: z.object({
-      id: z.string().uuid(),
-      triggerType: z.enum(['exact', 'alias', 'empty', 'fallback']),
-      priority: z.number().int(),
-      matchedTrigger: z.string().nullable(),
-      action: z.enum(['reply', 'create_handoff'])
-    }),
+    matchedRule: z
+      .object({
+        id: z.string().optional(),
+        triggerType: z.enum(['exact', 'alias', 'empty', 'fallback']),
+        priority: z.number().int(),
+        matchedTrigger: z.string().nullable(),
+        action: z.enum(['reply', 'create_handoff'])
+      })
+      .nullable(),
     response: z.string()
   }),
+  meta: responseMetaSchema
+});
+
+const aiChatbotModulePathByKey = {
+  overview: '/ai-chatbot/overview',
+  knowledge: '/ai-chatbot/knowledge',
+  instructions: '/ai-chatbot/instructions',
+  playground: '/ai-chatbot/playground',
+  conversations: '/ai-chatbot/conversations',
+  unanswered: '/ai-chatbot/unanswered',
+  handoffs: '/ai-chatbot/handoffs',
+  analytics: '/ai-chatbot/analytics',
+  settings: '/ai-chatbot/settings'
+} as const;
+
+const aiChatbotModuleSchema = z.object({
+  key: z.enum([
+    'overview',
+    'knowledge',
+    'instructions',
+    'playground',
+    'conversations',
+    'unanswered',
+    'handoffs',
+    'analytics',
+    'settings'
+  ]),
+  label: z.string(),
+  path: z.string().startsWith('/ai-chatbot/'),
+  state: z.enum(['available', 'planned']),
+  targetSprint: z.number().int().min(0).max(8)
+});
+
+export const aiChatbotFoundationResponseSchema = z.object({
+  data: z.object({
+    apiVersion: z.literal('v1'),
+    phase: z.literal('sprint_6'),
+    status: z.enum(['development_ready', 'blocked']),
+    runtime: z.object({
+      enabled: z.literal(false),
+      customerTraffic: z.literal('disabled'),
+      mode: z.literal('rag'),
+      sourceOfTruth: z.literal('knowledge_base'),
+      strictGrounding: z.boolean()
+    }),
+    tenant: z.object({
+      state: capabilityStateSchema,
+      strategy: z.literal('single_tenant_bootstrap'),
+      tenantId: z.string().uuid().nullable()
+    }),
+    provider: z.object({
+      state: capabilityStateSchema,
+      name: z.string().nullable(),
+      chatModel: z.string().nullable(),
+      embeddingModel: z.string().nullable(),
+      secretReferenceConfigured: z.boolean()
+    }),
+    infrastructure: z.object({
+      vectorStore: z.object({
+        state: capabilityStateSchema,
+        adapter: z.literal('postgresql_pgvector')
+      }),
+      queue: z.object({
+        state: capabilityStateSchema,
+        adapter: z.literal('redis')
+      }),
+      objectStorage: z.object({
+        state: capabilityStateSchema,
+        adapter: z.literal('s3_compatible')
+      })
+    }),
+    guardrails: z.object({
+      faqOnly: z.literal(true),
+      booking: z.literal(false),
+      payments: z.literal(false),
+      diagnosis: z.literal(false),
+      personalizedMedicalAdvice: z.literal(false),
+      freeGenerationWithoutContext: z.literal(false),
+      fallbackAndHandoff: z.literal(true)
+    }),
+    modules: z.array(aiChatbotModuleSchema).length(9)
+  }),
+  meta: responseMetaSchema
+}).superRefine((payload, context) => {
+  const seenKeys = new Set<string>();
+  payload.data.modules.forEach((module, index) => {
+    if (seenKeys.has(module.key)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['data', 'modules', index, 'key'],
+        message: `Duplicate AI chatbot module key: ${module.key}`
+      });
+    }
+    seenKeys.add(module.key);
+
+    if (module.path !== aiChatbotModulePathByKey[module.key]) {
+      context.addIssue({
+        code: 'custom',
+        path: ['data', 'modules', index, 'path'],
+        message: `Unexpected path for AI chatbot module ${module.key}`
+      });
+    }
+
+    const shouldBeAvailable = ['overview', 'knowledge', 'instructions', 'playground', 'conversations', 'unanswered', 'handoffs', 'settings'].includes(
+      module.key
+    );
+    if ((module.state === 'available') !== shouldBeAvailable) {
+      context.addIssue({
+        code: 'custom',
+        path: ['data', 'modules', index, 'state'],
+        message: `Unexpected Sprint 6 state for AI chatbot module ${module.key}`
+      });
+    }
+  });
+
+  if (
+    payload.data.status === 'development_ready' &&
+    (!payload.data.runtime.strictGrounding || !payload.data.tenant.tenantId)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['data', 'status'],
+      message:
+        'Development-ready AI foundation requires strict grounding and a bootstrap tenant'
+    });
+  }
+});
+
+const aiDependencyProbeStateSchema = z.enum([
+  'reachable',
+  'unreachable',
+  'not_configured',
+  'not_instrumented'
+]);
+
+const aiRetrievalSettingsSchema = z.object({
+  topK: z.number().int().min(1).max(20),
+  finalContextCount: z.number().int().min(1).max(10),
+  minimumSimilarity: z.number().min(0).max(1).nullable(),
+  maximumContextTokens: z.number().int().positive().nullable(),
+  keywordSearchEnabled: z.boolean(),
+  rerankerEnabled: z.boolean()
+}).refine((value) => value.finalContextCount <= value.topK, {
+  message: 'finalContextCount cannot exceed topK',
+  path: ['finalContextCount']
+});
+
+const aiFeatureFlagsSchema = z.object({
+  documentUpload: z.boolean(),
+  autoHandoff: z.boolean(),
+  analytics: z.boolean()
+});
+
+export const aiIntegrationSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  name: z.string(),
+  provider: z.string().nullable(),
+  chatModel: z.string().nullable(),
+  embeddingProvider: z.string().nullable(),
+  embeddingModel: z.string().nullable(),
+  embeddingDimensions: z.number().int().positive().nullable(),
+  secretReferenceConfigured: z.boolean(),
+  active: z.boolean(),
+  effectiveEnabled: z.literal(false),
+  strictGrounding: z.literal(true),
+  maxResponseTokens: z.number().int().min(50).max(2000),
+  temperature: z.number().min(0).max(1),
+  timeoutMs: z.number().int().min(500).max(60_000),
+  retryCount: z.number().int().min(0).max(3),
+  retrieval: aiRetrievalSettingsSchema,
+  featureFlags: aiFeatureFlagsSchema,
+  revision: z.number().int().positive(),
+  updatedAt: z.string().datetime()
+});
+
+export const aiReadinessSchema = z.object({
+  effectiveEnabled: z.literal(false),
+  blockers: z.array(z.object({ code: z.string(), message: z.string() })),
+  dependencies: z.object({
+    vectorStore: aiDependencyProbeStateSchema,
+    queue: aiDependencyProbeStateSchema,
+    objectStorage: aiDependencyProbeStateSchema,
+    chatProvider: aiDependencyProbeStateSchema,
+    embeddingProvider: aiDependencyProbeStateSchema,
+    checkedAt: z.string().datetime()
+  }),
+  publishedPromptConfigured: z.boolean()
+});
+
+export const aiIntegrationResponseSchema = z.object({
+  data: z.object({
+    integration: aiIntegrationSchema,
+    readiness: aiReadinessSchema
+  }),
+  meta: responseMetaSchema
+});
+
+export const aiConnectionTestResponseSchema = z.object({
+  data: z.object({
+    chatProvider: z.enum([
+      'reachable',
+      'unreachable',
+      'invalid_configuration'
+    ]),
+    embeddingProvider: z.enum([
+      'reachable',
+      'unreachable',
+      'invalid_configuration'
+    ]),
+    testedAt: z.string().datetime()
+  }),
+  meta: responseMetaSchema
+});
+
+export const aiPromptSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  name: z.string(),
+  version: z.number().int().positive(),
+  status: z.enum(['draft', 'review', 'approved', 'published', 'archived']),
+  primaryLanguage: z.string(),
+  tone: z.string(),
+  systemInstruction: z.string(),
+  fallbackMessage: z.string(),
+  handoffMessage: z.string(),
+  disclaimerText: z.string().nullable(),
+  maxAnswerLength: z.number().int().min(50).max(4000),
+  createdBy: z.string().uuid(),
+  approvedBy: z.string().uuid().nullable(),
+  createdAt: z.string().datetime(),
+  approvedAt: z.string().datetime().nullable(),
+  publishedAt: z.string().datetime().nullable()
+});
+
+export const aiPromptResponseSchema = z.object({
+  data: aiPromptSchema,
+  meta: responseMetaSchema
+});
+
+export const aiPromptListResponseSchema = z.object({
+  data: z.array(aiPromptSchema),
+  meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+
+export const knowledgeCategorySchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  name: z.string(),
+  slug: z.string(),
+  description: z.string().nullable(),
+  active: z.boolean(),
+  sortOrder: z.number().int().min(0).max(10_000),
+  revision: z.number().int().positive(),
+  knowledgeCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const knowledgeItemSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  categoryId: z.string().uuid().nullable(),
+  categoryName: z.string().nullable(),
+  sourceType: z.enum(['faq', 'article']),
+  versionId: z.string().uuid(),
+  version: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  status: z.enum(['draft', 'review', 'approved', 'published', 'archived']),
+  title: z.string(),
+  question: z.string().nullable(),
+  questionVariants: z.array(z.string()).max(50),
+  content: z.string(),
+  sourceReference: z.string().nullable(),
+  internalNotes: z.string().nullable(),
+  tags: z.array(z.string()).max(20),
+  metadata: z.record(z.string(), z.unknown()),
+  contentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  requiresDisclaimer: z.boolean(),
+  priority: z.number().int().min(0).max(100),
+  validFrom: z.string().datetime().nullable(),
+  validUntil: z.string().datetime().nullable(),
+  expired: z.boolean(),
+  createdBy: z.string().uuid(),
+  approvedBy: z.string().uuid().nullable(),
+  publishedBy: z.string().uuid().nullable(),
+  changeReason: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  approvedAt: z.string().datetime().nullable(),
+  publishedAt: z.string().datetime().nullable()
+});
+
+export const knowledgeCategoryListResponseSchema = z.object({
+  data: z.array(knowledgeCategorySchema),
+  meta: responseMetaSchema
+});
+
+export const knowledgeCategoryResponseSchema = z.object({
+  data: knowledgeCategorySchema,
+  meta: responseMetaSchema
+});
+
+export const knowledgeListResponseSchema = z.object({
+  data: z.array(knowledgeItemSchema),
+  meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+
+export const knowledgeResponseSchema = z.object({
+  data: knowledgeItemSchema,
+  meta: responseMetaSchema
+});
+
+export const knowledgeBulkResponseSchema = z.object({
+  data: z.array(knowledgeItemSchema),
+  meta: responseMetaSchema
+});
+
+export const knowledgeDocumentStatusSchema = z.enum([
+  'uploaded', 'queued', 'extracting', 'cleaning', 'chunking',
+  'embedding', 'ready', 'failed', 'archived'
+]);
+
+export const knowledgeDocumentSchema = z.object({
+  id: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  categoryId: z.string().uuid().nullable(),
+  categoryName: z.string().nullable(),
+  filename: z.string(),
+  mimeType: z.string(),
+  extension: z.enum(['pdf', 'docx', 'txt', 'md', 'csv']),
+  fileSize: z.number().nonnegative(),
+  contentSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  status: knowledgeDocumentStatusSchema,
+  processingRevision: z.number().int().nonnegative(),
+  attemptCount: z.number().int().nonnegative(),
+  extractedCharacterCount: z.number().int().nonnegative(),
+  pageCount: z.number().int().positive().nullable(),
+  totalChunks: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  uploadedBy: z.string().uuid(),
+  uploadedByName: z.string(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  processedAt: z.string().datetime().nullable()
+});
+
+export const knowledgeChunkPreviewSchema = z.object({
+  id: z.string().uuid(),
+  chunkIndex: z.number().int().nonnegative(),
+  title: z.string().nullable(),
+  section: z.string().nullable(),
+  content: z.string(),
+  tokenCount: z.number().int().positive(),
+  status: z.enum(['active', 'inactive', 'failed']),
+  embeddingModel: z.string(),
+  metadata: z.record(z.string(), z.unknown())
+});
+
+export const knowledgeDocumentResponseSchema = z.object({
+  data: knowledgeDocumentSchema,
+  meta: responseMetaSchema
+});
+
+export const knowledgeDocumentListResponseSchema = z.object({
+  data: z.array(knowledgeDocumentSchema),
+  meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+
+export const knowledgeDocumentPreviewResponseSchema = z.object({
+  data: z.object({
+    document: knowledgeDocumentSchema,
+    extractionPreview: z.string().nullable(),
+    chunks: z.array(knowledgeChunkPreviewSchema)
+  }),
+  meta: responseMetaSchema
+});
+
+export const knowledgeSearchTestResponseSchema = z.object({
+  data: z.array(z.object({
+    chunkId: z.string().uuid(),
+    title: z.string().nullable(),
+    section: z.string().nullable(),
+    content: z.string(),
+    score: z.number(),
+    sourceType: z.string(),
+    documentId: z.string().uuid().nullable(),
+    knowledgeVersionId: z.string().uuid().nullable()
+  })),
+  meta: responseMetaSchema
+});
+
+export const ragSourceSchema = z.object({
+  chunkId: z.string().uuid(),
+  title: z.string().nullable(),
+  section: z.string().nullable(),
+  sourceType: z.string(),
+  documentId: z.string().uuid().nullable(),
+  knowledgeVersionId: z.string().uuid().nullable(),
+  score: z.number(),
+  rank: z.number().int().positive(),
+  usedInPrompt: z.boolean(),
+  usedInAnswer: z.boolean()
+});
+
+export const aiRagResultResponseSchema = z.object({
+  data: z.object({
+    conversationId: z.string().uuid(),
+    reply: z.string(),
+    answerStatus: z.enum([
+      'supported', 'partially_supported', 'unsupported',
+      'safety_fallback', 'admin_required'
+    ]),
+    requiresDisclaimer: z.boolean(),
+    customerInterest: z.boolean(),
+    handoff: z.boolean(),
+    handoffReason: z.string().nullable(),
+    usedKnowledge: z.array(ragSourceSchema),
+    retrievedKnowledge: z.array(ragSourceSchema),
+    traceId: z.string().uuid(),
+    model: z.string().nullable(),
+    promptVersionId: z.string().uuid().nullable(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    retrievalLatencyMs: z.number().int().nonnegative(),
+    providerLatencyMs: z.number().int().nonnegative(),
+    latencyMs: z.number().int().nonnegative(),
+    validationStatus: z.enum(['validated', 'no_context', 'provider_error', 'invalid_output']),
+    providerCalled: z.boolean(),
+    idempotentReplay: z.boolean(),
+    safetyCategory: z.enum([
+      'emergency', 'medical_personal', 'diagnosis_request', 'medication_dosage',
+      'stop_treatment', 'prompt_injection', 'explicit_admin', 'normal_faq'
+    ]),
+    safetyFlags: z.array(z.string()),
+    fallbackReason: z.string().nullable(),
+    outputValidationReasons: z.array(z.string()),
+    interestConfidence: z.number().min(0).max(1),
+    historyMessagesUsed: z.number().int().min(0).max(10),
+    handoffId: z.string().uuid().nullable(),
+    handoffCreated: z.boolean()
+  }),
+  meta: responseMetaSchema
+});
+
+export const aiConversationLogSchema = z.object({
+  id: z.string().uuid(),
+  contactId: z.string(),
+  customer: z.object({ displayName: z.string().nullable(), maskedIdentifier: z.string() }),
+  channel: z.enum(['whatsapp', 'playground']),
+  channelSessionId: z.string(),
+  status: z.enum(['active', 'handed_off', 'closed']),
+  topic: z.string().nullable(),
+  interested: z.boolean(),
+  summary: z.string().nullable(),
+  lastKnowledgeIds: z.array(z.string()),
+  handoffStatus: z.string().nullable(),
+  traceCount: z.number().int().nonnegative(),
+  fallbackCount: z.number().int().nonnegative(),
+  handoff: z.boolean(),
+  lastAnswerStatus: z.string().nullable(),
+  lastModel: z.string().nullable(),
+  lastTraceId: z.string().nullable(),
+  reviewedBy: z.string().nullable(),
+  startedAt: z.string().datetime(),
+  lastMessageAt: z.string().datetime(),
+  closedAt: z.string().datetime().nullable()
+});
+
+const aiFeedbackTypeSchema = z.enum([
+  'correct', 'incorrect', 'incomplete', 'unsafe',
+  'wrong_source', 'too_long', 'too_promotional'
+]);
+export const aiFeedbackSchema = z.object({
+  id: z.string().uuid(), type: aiFeedbackTypeSchema,
+  comment: z.string().nullable(), correctKnowledgeIds: z.array(z.string().uuid()),
+  suggestedAnswer: z.string().nullable(), reviewerId: z.string().uuid(),
+  reviewedAt: z.string().datetime().nullable()
+});
+const aiConversationSourceSchema = z.object({
+  chunkId: z.string().uuid(), title: z.string().nullable(), section: z.string().nullable(),
+  sourceType: z.string(), score: z.coerce.number(), rank: z.number().int().positive(),
+  usedInPrompt: z.boolean(), usedInAnswer: z.boolean(),
+  knowledgeVersionId: z.string().uuid().nullable(), documentId: z.string().uuid().nullable()
+});
+export const aiConversationMessageSchema = z.object({
+  id: z.string().uuid(), sourceMessageId: z.string(), responseMessageId: z.string().nullable(),
+  customerMessage: z.string(), assistantMessage: z.string().nullable(),
+  answerStatus: z.string(), validationStatus: z.string(), fallbackReason: z.string().nullable(),
+  safetyCategory: z.string(), handoff: z.boolean(), requiresDisclaimer: z.boolean(),
+  model: z.string().nullable(), promptVersionId: z.string().uuid().nullable(),
+  inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative(),
+  retrievalLatencyMs: z.number().int().nonnegative(), providerLatencyMs: z.number().int().nonnegative(),
+  latencyMs: z.number().int().nonnegative(), traceId: z.string(),
+  sources: z.array(aiConversationSourceSchema), feedback: aiFeedbackSchema.nullable(),
+  createdAt: z.string().datetime()
+});
+export const aiConversationListResponseSchema = z.object({
+  data: z.array(aiConversationLogSchema), meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+export const aiConversationResponseSchema = z.object({ data: aiConversationLogSchema, meta: responseMetaSchema });
+export const aiConversationMessageListResponseSchema = z.object({
+  data: z.array(aiConversationMessageSchema), meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+export const aiFeedbackResponseSchema = z.object({ data: aiFeedbackSchema, meta: responseMetaSchema });
+
+export const unansweredQuestionSchema = z.object({
+  id: z.string().uuid(), sampleQuestion: z.string(), normalizedQuestion: z.string(),
+  occurrenceCount: z.number().int().positive(), bestSimilarity: z.number().nullable(),
+  nearestKnowledgeIds: z.array(z.string()), predictedCategoryId: z.string().uuid().nullable(),
+  predictedCategoryName: z.string().nullable(),
+  status: z.enum(['new', 'reviewing', 'knowledge_created', 'ignored', 'resolved']),
+  reviewedBy: z.string().uuid().nullable(), resolvedKnowledgeItemId: z.string().uuid().nullable(),
+  reviewNote: z.string().nullable(), conversationIds: z.array(z.string().uuid()),
+  firstSeenAt: z.string().datetime(), lastSeenAt: z.string().datetime()
+});
+export const unansweredListResponseSchema = z.object({
+  data: z.array(unansweredQuestionSchema), meta: responseMetaSchema.extend({ nextCursor: z.string().nullable() })
+});
+export const unansweredResponseSchema = z.object({ data: unansweredQuestionSchema, meta: responseMetaSchema });
+export const unansweredKnowledgeResponseSchema = z.object({
+  data: z.object({ unanswered: unansweredQuestionSchema, knowledge: knowledgeItemSchema }), meta: responseMetaSchema
+});
+
+export const aiTestRunSchema = z.object({
+  id: z.string().uuid(), testCaseId: z.string().uuid().optional(), passed: z.boolean(),
+  score: z.number().min(0).max(1), checks: z.record(z.string(), z.boolean()),
+  answerStatus: z.string(), answerPreview: z.string(), traceId: z.string(), ranAt: z.string().datetime()
+});
+export const aiTestCaseSchema = z.object({
+  id: z.string().uuid(), name: z.string(), question: z.string(), recentContext: z.array(z.string()),
+  promptVersionId: z.string().uuid().nullable(), expectedCategory: z.string().nullable(),
+  expectedKnowledgeIds: z.array(z.string()), mustContain: z.array(z.string()),
+  mustNotContain: z.array(z.string()), expectedHandoff: z.boolean().nullable(), active: z.boolean(),
+  createdBy: z.string().uuid(), updatedBy: z.string().uuid(), createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(), runs: z.array(aiTestRunSchema)
+});
+export const aiTestCaseListResponseSchema = z.object({ data: z.array(aiTestCaseSchema), meta: responseMetaSchema });
+export const aiTestCaseResponseSchema = z.object({ data: aiTestCaseSchema, meta: responseMetaSchema });
+export const aiTestRunResponseSchema = z.object({
+  data: aiTestRunSchema.extend({ result: aiRagResultResponseSchema.shape.data }), meta: responseMetaSchema
+});
+export const aiTestBatchResponseSchema = z.object({
+  data: z.object({ total: z.number().int().nonnegative(), passed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(), passRate: z.number().min(0).max(1),
+    runs: z.array(aiTestRunSchema.extend({ result: aiRagResultResponseSchema.shape.data })) }),
   meta: responseMetaSchema
 });
 
@@ -637,6 +1172,15 @@ export type ContactResponse = z.infer<typeof contactResponseSchema>;
 export type Handoff = z.infer<typeof handoffSchema>;
 export type HandoffListResponse = z.infer<typeof handoffListResponseSchema>;
 export type HandoffResponse = z.infer<typeof handoffResponseSchema>;
+export type AiConversationLog = z.infer<typeof aiConversationLogSchema>;
+export type AiConversationMessage = z.infer<typeof aiConversationMessageSchema>;
+export type AiConversationListResponse = z.infer<typeof aiConversationListResponseSchema>;
+export type AiConversationMessageListResponse = z.infer<typeof aiConversationMessageListResponseSchema>;
+export type AiFeedback = z.infer<typeof aiFeedbackSchema>;
+export type UnansweredQuestion = z.infer<typeof unansweredQuestionSchema>;
+export type UnansweredListResponse = z.infer<typeof unansweredListResponseSchema>;
+export type AiTestCase = z.infer<typeof aiTestCaseSchema>;
+export type AiTestRun = z.infer<typeof aiTestRunSchema>;
 export type OutboxState = z.infer<typeof outboxStateSchema>;
 export type OutboxItem = z.infer<typeof outboxItemSchema>;
 export type OutboxListResponse = z.infer<typeof outboxListResponseSchema>;
@@ -651,11 +1195,35 @@ export type ReconciliationResponse = z.infer<
   typeof reconciliationResponseSchema
 >;
 export type ChatbotRule = z.infer<typeof chatbotRuleSchema>;
-export type ChatbotVersion = z.infer<typeof chatbotVersionSchema>;
-export type ChatbotVersionListResponse = z.infer<
-  typeof chatbotVersionListResponseSchema
->;
-export type ChatbotVersionDetailResponse = z.infer<
-  typeof chatbotVersionDetailResponseSchema
+export type ChatbotConfigResponse = z.infer<
+  typeof chatbotConfigResponseSchema
 >;
 export type ChatbotTestResponse = z.infer<typeof chatbotTestResponseSchema>;
+export type AiChatbotFoundationResponse = z.infer<
+  typeof aiChatbotFoundationResponseSchema
+>;
+export type AiChatbotModule = AiChatbotFoundationResponse['data']['modules'][number];
+export type AiIntegration = z.infer<typeof aiIntegrationSchema>;
+export type AiReadiness = z.infer<typeof aiReadinessSchema>;
+export type AiIntegrationResponse = z.infer<
+  typeof aiIntegrationResponseSchema
+>;
+export type AiConnectionTestResponse = z.infer<
+  typeof aiConnectionTestResponseSchema
+>;
+export type AiPrompt = z.infer<typeof aiPromptSchema>;
+export type AiPromptResponse = z.infer<typeof aiPromptResponseSchema>;
+export type AiPromptListResponse = z.infer<typeof aiPromptListResponseSchema>;
+export type KnowledgeCategory = z.infer<typeof knowledgeCategorySchema>;
+export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
+export type KnowledgeCategoryListResponse = z.infer<typeof knowledgeCategoryListResponseSchema>;
+export type KnowledgeCategoryResponse = z.infer<typeof knowledgeCategoryResponseSchema>;
+export type KnowledgeListResponse = z.infer<typeof knowledgeListResponseSchema>;
+export type KnowledgeResponse = z.infer<typeof knowledgeResponseSchema>;
+export type KnowledgeDocumentStatus = z.infer<typeof knowledgeDocumentStatusSchema>;
+export type KnowledgeDocument = z.infer<typeof knowledgeDocumentSchema>;
+export type KnowledgeDocumentResponse = z.infer<typeof knowledgeDocumentResponseSchema>;
+export type KnowledgeDocumentListResponse = z.infer<typeof knowledgeDocumentListResponseSchema>;
+export type KnowledgeDocumentPreviewResponse = z.infer<typeof knowledgeDocumentPreviewResponseSchema>;
+export type KnowledgeSearchTestResponse = z.infer<typeof knowledgeSearchTestResponseSchema>;
+export type AiRagResultResponse = z.infer<typeof aiRagResultResponseSchema>;

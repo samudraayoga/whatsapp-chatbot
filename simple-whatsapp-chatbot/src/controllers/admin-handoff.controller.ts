@@ -42,7 +42,7 @@ export class AdminHandoffController {
         typeof request.query.limit === 'string'
           ? Number(request.query.limit)
           : 30;
-      if (!['all', 'open', 'assigned', 'resolved', 'canceled'].includes(state)) {
+      if (!['all', 'open', 'assigned', 'in_progress', 'resolved', 'closed', 'canceled'].includes(state)) {
         throw new AppError('Handoff state is invalid', 400, 'INVALID_FILTER');
       }
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -59,7 +59,9 @@ export class AdminHandoffController {
       const result = await this.handoffs.list({
         state: state as HandoffState | 'all',
         cursor,
-        limit
+        limit,
+        ...(request.tenantContext?.tenantId
+          ? { tenantId: request.tenantContext.tenantId } : {})
       });
       response.json({
         data: result.data,
@@ -72,6 +74,72 @@ export class AdminHandoffController {
     } catch (error) {
       next(error);
     }
+  };
+
+  detail = async (
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const id = parseUuid(request.params.handoffId);
+      const handoff = request.tenantContext?.tenantId
+        ? await this.handoffs.get(id, request.tenantContext.tenantId)
+        : await this.handoffs.get(id);
+      if (!handoff) throw new AppError('Handoff was not found', 404, 'HANDOFF_NOT_FOUND');
+      response.setHeader('Cache-Control', 'no-store');
+      response.json({
+        data: handoff,
+        meta: { requestId: request.requestId, generatedAt: new Date().toISOString() }
+      });
+    } catch (error) { next(error); }
+  };
+
+  markInProgress = async (
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const id = parseUuid(request.params.handoffId);
+      const updated = request.tenantContext?.tenantId
+        ? await this.handoffs.markInProgress(id, request.adminAuth!.id, request.tenantContext.tenantId)
+        : await this.handoffs.markInProgress(id, request.adminAuth!.id);
+      if (!updated) throw new AppError('Handoff cannot be started', 409, 'HANDOFF_STATE_CONFLICT');
+      await this.audit.record({
+        actorUserId: request.adminAuth!.id, action: 'handoff.in_progress',
+        resourceType: 'handoff_task', resourceId: id, afterState: updated,
+        requestId: request.requestId, ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
+      response.json({ data: updated, meta: { requestId: request.requestId, generatedAt: new Date().toISOString() } });
+    } catch (error) { next(error); }
+  };
+
+  close = async (
+    request: Request,
+    response: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const id = parseUuid(request.params.handoffId);
+      const note = typeof request.body?.resolutionNote === 'string'
+        ? request.body.resolutionNote.trim() : '';
+      if (!note || note.length > 1000) {
+        throw new AppError('Resolution note must contain 1 to 1000 characters', 400, 'INVALID_RESOLUTION_NOTE');
+      }
+      const updated = request.tenantContext?.tenantId
+        ? await this.handoffs.close(id, note, request.tenantContext.tenantId)
+        : await this.handoffs.close(id, note);
+      if (!updated) throw new AppError('Handoff cannot be closed', 409, 'HANDOFF_STATE_CONFLICT');
+      await this.audit.record({
+        actorUserId: request.adminAuth!.id, action: 'handoff.close',
+        resourceType: 'handoff_task', resourceId: id, reason: note,
+        afterState: updated, requestId: request.requestId, ipAddress: request.ip,
+        userAgent: request.get('user-agent')
+      });
+      response.json({ data: updated, meta: { requestId: request.requestId, generatedAt: new Date().toISOString() } });
+    } catch (error) { next(error); }
   };
 
   assign = async (
@@ -102,7 +170,9 @@ export class AdminHandoffController {
           'PERMISSION_DENIED'
         );
       }
-      const before = await this.handoffs.get(id);
+      const before = request.tenantContext?.tenantId
+        ? await this.handoffs.get(id, request.tenantContext.tenantId)
+        : await this.handoffs.get(id);
       if (!before) {
         throw new AppError('Handoff was not found', 404, 'HANDOFF_NOT_FOUND');
       }
@@ -117,7 +187,9 @@ export class AdminHandoffController {
         ipAddress: request.ip,
         userAgent: request.get('user-agent')
       });
-      const updated = await this.handoffs.assign(id, requestedAssignee);
+      const updated = request.tenantContext?.tenantId
+        ? await this.handoffs.assign(id, requestedAssignee, request.tenantContext.tenantId)
+        : await this.handoffs.assign(id, requestedAssignee);
       if (!updated) {
         throw new AppError(
           'Handoff is no longer open',
@@ -166,7 +238,9 @@ export class AdminHandoffController {
           'INVALID_RESOLUTION_NOTE'
         );
       }
-      const before = await this.handoffs.get(id);
+      const before = request.tenantContext?.tenantId
+        ? await this.handoffs.get(id, request.tenantContext.tenantId)
+        : await this.handoffs.get(id);
       if (!before) {
         throw new AppError('Handoff was not found', 404, 'HANDOFF_NOT_FOUND');
       }
@@ -181,7 +255,9 @@ export class AdminHandoffController {
         ipAddress: request.ip,
         userAgent: request.get('user-agent')
       });
-      const updated = await this.handoffs.resolve(id, resolutionNote);
+      const updated = request.tenantContext?.tenantId
+        ? await this.handoffs.resolve(id, resolutionNote, request.tenantContext.tenantId)
+        : await this.handoffs.resolve(id, resolutionNote);
       if (!updated) {
         throw new AppError(
           'Handoff cannot be resolved from its current state',

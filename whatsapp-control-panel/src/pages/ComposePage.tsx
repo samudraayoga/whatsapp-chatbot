@@ -24,16 +24,16 @@ export const ComposePage = ({ user, overview }: ComposePageProps) => {
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 4 · Safe compose</p>
-          <h1>Compose message</h1>
-          <p>Pilih contact, periksa readiness, lalu buat command durable.</p>
+          <p className="eyebrow">Pengiriman pesan</p>
+          <h1>Tulis pesan</h1>
+          <p>Pilih penerima, periksa kesiapan, lalu tulis pesan WhatsApp.</p>
         </div>
-        <button className="button" type="button" onClick={() => navigate('/messages/outbox')}>Buka outbox</button>
+        <button className="button" type="button" onClick={() => navigate('/messages/outbox')}>Buka antrean</button>
       </header>
 
       <div className="compose-layout">
         <aside className="panel compose-recipient">
-          <h2>Recipient</h2>
+          <h2>Penerima</h2>
           <input
             aria-label="Cari recipient"
             placeholder="Cari nama atau nomor…"
@@ -49,7 +49,7 @@ export const ComposePage = ({ user, overview }: ComposePageProps) => {
                 onClick={() => setSelectedId(contact.id)}
                 type="button"
               >
-                <strong>{contact.displayName ?? 'Contact tanpa nama'}</strong>
+                <strong>{contact.displayName ?? 'Kontak tanpa nama'}</strong>
                 <span>{contact.maskedPhone ?? 'Nomor tidak tersedia'} · {contact.identity.status}</span>
               </button>
             ))}
@@ -57,9 +57,9 @@ export const ComposePage = ({ user, overview }: ComposePageProps) => {
         </aside>
         <div className="panel compose-stage">
           <div className="preflight-grid">
-            <div><span>Session</span><strong>{overview?.session.state ?? 'loading'}</strong></div>
-            <div><span>Risk</span><strong>{overview?.safety.risk ?? 'unknown'}</strong></div>
-            <div><span>Daily budget</span><strong>{overview?.rates.day ? `${overview.rates.day.used}/${overview.rates.day.limit}` : 'Unavailable'}</strong></div>
+            <div><span>Sesi</span><strong>{overview?.session.state ?? 'Memuat'}</strong></div>
+            <div><span>Risiko</span><strong>{overview?.safety.risk ?? 'Belum diketahui'}</strong></div>
+            <div><span>Batas harian</span><strong>{overview?.rates.day ? `${overview.rates.day.used}/${overview.rates.day.limit}` : 'Belum tersedia'}</strong></div>
           </div>
           <MessageComposer
             overview={overview}

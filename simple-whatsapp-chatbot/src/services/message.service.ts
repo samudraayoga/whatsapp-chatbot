@@ -30,6 +30,7 @@ type SaveMessageInput = {
 type ApplyChatbotEvaluationInput = {
   whatsappMessageId: string;
   chatbotVersionId: string;
+  chatbotRevision: number;
   chatbotRuleId: string;
   createHandoff?: boolean;
 };
@@ -191,6 +192,7 @@ export class MessageService {
         input.whatsappMessageId,
         JSON.stringify({
           chatbotVersionId: input.chatbotVersionId,
+          chatbotRevision: input.chatbotRevision,
           chatbotRuleId: input.chatbotRuleId
         })
       ]

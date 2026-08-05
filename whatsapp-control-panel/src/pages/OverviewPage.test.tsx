@@ -17,10 +17,10 @@ describe('OverviewPage', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'connected' })
+      await screen.findByRole('heading', { name: 'Terhubung' })
     ).toBeInTheDocument();
     expect(screen.getByText('4/100')).toBeInTheDocument();
-    expect(screen.getByText('3 queued')).toBeInTheDocument();
-    expect(screen.getByText('7 open')).toBeInTheDocument();
+    expect(screen.getByText('3 menunggu')).toBeInTheDocument();
+    expect(screen.getByText('7 terbuka')).toBeInTheDocument();
   });
 });

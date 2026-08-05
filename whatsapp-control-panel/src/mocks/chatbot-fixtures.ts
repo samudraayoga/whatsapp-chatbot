@@ -1,11 +1,7 @@
 import type {
-  ChatbotRule,
-  ChatbotVersion,
-  ChatbotVersionDetailResponse
+  ChatbotConfigResponse,
+  ChatbotRule
 } from '../api/contracts';
-
-const now = '2026-07-30T07:00:00.000Z';
-const activeId = '9db7b148-f0c3-4b54-9f5f-935aa343e34a';
 
 const menu = `Halo! 👋
 
@@ -15,7 +11,7 @@ const menu = `Halo! 👋
 4. Reservasi
 5. Hubungi Admin`;
 
-const initialRules: ChatbotRule[] = [
+export const mockChatbotRules: ChatbotRule[] = [
   {
     id: '50ae7063-6b7f-4b8b-aaf1-0c0c77a19f01',
     triggerType: 'exact',
@@ -63,67 +59,13 @@ const initialRules: ChatbotRule[] = [
   }
 ];
 
-export const mockChatbotDetails: ChatbotVersionDetailResponse['data'][] = [
-  {
-    version: {
-      id: activeId,
-      versionNumber: 1,
-      name: 'Initial migrated rules',
-      status: 'published',
-      changeSummary: 'Migrated from source code',
-      basedOnVersionId: null,
-      revision: 0,
-      contentHash: 'mock-active-hash',
-      createdBy: null,
-      publishedBy: null,
-      createdAt: now,
-      updatedAt: now,
-      publishedAt: now,
-      ruleCount: initialRules.length
-    },
-    rules: initialRules
-  }
-];
+export const mockChatbotConfig: ChatbotConfigResponse['data'] = {
+  revision: 1,
+  updatedAt: '2026-07-30T07:00:00.000Z',
+  rules: mockChatbotRules
+};
 
-export const mockMeta = () => ({
-  requestId: 'req_mock_sprint_5',
+export const mockChatbotMeta = () => ({
+  requestId: 'req_mock_chatbot',
   generatedAt: new Date().toISOString()
 });
-
-export const mockVersions = (): ChatbotVersion[] =>
-  mockChatbotDetails
-    .map((detail) => detail.version)
-    .sort((left, right) => right.versionNumber - left.versionNumber);
-
-export const mockCreateDraft = (
-  name: string
-): ChatbotVersionDetailResponse['data'] => {
-  const active = mockChatbotDetails.find(
-    (detail) => detail.version.status === 'published'
-  )!;
-  const timestamp = new Date().toISOString();
-  const nextVersion =
-    Math.max(...mockChatbotDetails.map((detail) => detail.version.versionNumber)) +
-    1;
-  const detail: ChatbotVersionDetailResponse['data'] = {
-    version: {
-      id: crypto.randomUUID(),
-      versionNumber: nextVersion,
-      name,
-      status: 'draft',
-      changeSummary: null,
-      basedOnVersionId: active.version.id,
-      revision: 0,
-      contentHash: active.version.contentHash,
-      createdBy: 'local-admin',
-      publishedBy: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      publishedAt: null,
-      ruleCount: active.rules.length
-    },
-    rules: active.rules.map((rule) => ({ ...rule, id: crypto.randomUUID() }))
-  };
-  mockChatbotDetails.push(detail);
-  return detail;
-};

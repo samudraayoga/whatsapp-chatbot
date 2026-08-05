@@ -16,8 +16,12 @@ Backend chatbot WhatsApp sederhana untuk MVP local development dengan Node.js 22
   dan human follow-up queue untuk pilihan menu `5`.
 - Menyediakan safe compose dengan idempotency key, PostgreSQL durable outbox,
   worker lease/backoff, guarded cancel/retry, dan immutable message timeline.
-- Menyediakan chatbot rules berversi dengan draft validation, dry-run,
-  guarded publish/rollback, audit, dan active runtime cache.
+- Menyediakan satu konfigurasi chatbot aktif dengan validasi, preview perubahan
+  yang belum disimpan, atomic save, optimistic concurrency, audit, dan runtime cache.
+- Menyediakan **Integrasi Chatbot AI** yang tetap customer-default-off,
+  governance FAQ/artikel, document pipeline Sprint 3, Sprint 4 RAG, serta
+  Sprint 5 safety/memory/interest/disclaimer/idempotent human handoff, dan
+  Sprint 6 Playground evaluation, Conversation Logs, feedback, serta Unanswered Questions.
 
 ## Struktur Project
 
@@ -85,15 +89,40 @@ WA_AUTH_PATH=./auth
 ADMIN_BOOTSTRAP_USERNAME=admin
 ADMIN_BOOTSTRAP_PASSWORD=admin123
 ADMIN_BOOTSTRAP_DISPLAY_NAME=Local Admin
+SUPERADMIN_BOOTSTRAP_USERNAME=superadmin
+SUPERADMIN_BOOTSTRAP_PASSWORD=superadmin123
+SUPERADMIN_BOOTSTRAP_DISPLAY_NAME=SUPERADMIN
 ADMIN_SESSION_TTL_HOURS=8
 SAFETY_RESET_ENABLED=false
 ```
 
-Ganti bootstrap password untuk environment selain local. Pada `NODE_ENV=production`,
-`ADMIN_BOOTSTRAP_PASSWORD` wajib diisi. Nilai ini hanya membuat user pertama dan
-tidak merotasi password user yang sudah ada.
+Ganti kedua bootstrap password untuk environment selain local. Pada
+`NODE_ENV=production`, `ADMIN_BOOTSTRAP_PASSWORD` dan
+`SUPERADMIN_BOOTSTRAP_PASSWORD` wajib diisi dengan nilai berbeda yang kuat. Nilai
+tersebut hanya membuat akun yang belum ada dan tidak merotasi password akun lama.
 
 ## Menjalankan Aplikasi
+
+### Infrastruktur Integrasi Chatbot AI
+
+Untuk Sprint 6, nyalakan PostgreSQL/pgvector, Redis, dan MinIO lalu jalankan
+backend host:
+
+```bash
+npm run dev:ai
+```
+
+Smoke test pipeline dokumen (data sintetis dan embedding mock):
+
+```bash
+npm run test:smoke:ai-documents
+npm run test:smoke:ai-rag
+```
+
+Credential provider/embedding harus masuk melalui deployment secret. Untuk local,
+gunakan `AI_CHATBOT_PROVIDER_SECRET_REF=env://AI_PROVIDER_API_KEY`, lalu isi raw
+token hanya pada `AI_PROVIDER_API_KEY` di `.env`; jangan pernah menaruh token di
+frontend atau source code.
 
 ### Development — direkomendasikan
 
@@ -179,14 +208,10 @@ curl -X POST http://localhost:3000/api/messages/send \
 
 ## Menguji Chatbot
 
-Kirim pesan WhatsApp langsung ke akun yang terhubung:
-
-- `ping` akan dibalas `pong`
-- `halo`, `hai`, `hello` akan dibalas sapaan
-- `menu` akan menampilkan daftar perintah
-- `jam` akan menampilkan waktu server
-
-Pesan selain itu akan dibalas dengan pesan fallback.
+Kirim pesan WhatsApp langsung ke akun yang terhubung. Pesan pertama menggunakan
+rule input kosong, sehingga sapaan awal selalu berasal dari konfigurasi aktif.
+Pesan berikutnya dicocokkan terhadap trigger aktif dan menggunakan rule fallback
+jika tidak ada yang cocok.
 
 ## Melihat Log
 
@@ -267,13 +292,9 @@ docker compose up --build
 - `POST /api/admin/v1/outbox/:outboxId/cancel`
 - `POST /api/admin/v1/outbox/:outboxId/retry`
 - `POST /api/admin/v1/outbox/:outboxId/reconcile`
-- `GET /api/admin/v1/chatbot/versions`
-- `POST /api/admin/v1/chatbot/versions/drafts`
-- `GET /api/admin/v1/chatbot/versions/:versionId`
-- `PUT /api/admin/v1/chatbot/versions/:versionId/rules`
+- `GET /api/admin/v1/chatbot/config`
+- `PUT /api/admin/v1/chatbot/config`
 - `POST /api/admin/v1/chatbot/test`
-- `POST /api/admin/v1/chatbot/versions/:versionId/publish`
-- `POST /api/admin/v1/chatbot/versions/:versionId/rollback`
 
 Browser memakai opaque `admin_session` cookie. Cookie session bersifat `HttpOnly`;
 mutation juga wajib mengirim cookie `admin_csrf` melalui header `X-CSRF-Token`.
@@ -375,4 +396,4 @@ Baileys bukan WhatsApp Business Cloud API resmi. Penggunaannya harus memperhatik
 ## Pengembangan Tahap Berikutnya
 
 - Menambahkan validasi schema dengan library seperti Zod.
-- Menambahkan guarded reset/re-pair untuk Admin dengan step-up authentication.
+- Mengevaluasi approval workflow tambahan untuk operasi berisiko tinggi.

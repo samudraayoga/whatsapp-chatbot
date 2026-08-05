@@ -1,232 +1,170 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  createChatbotDraft,
-  getChatbotVersion,
-  listChatbotVersions,
-  publishChatbotVersion,
-  replaceChatbotRules,
-  rollbackChatbotVersion,
+  getChatbotConfig,
+  saveChatbotConfig,
   testChatbotRules
 } from '../api/chatbot';
-import type {
-  ChatbotRule,
-  ChatbotVersionDetailResponse
-} from '../api/contracts';
-import { StatusBadge } from '../components/StatusBadge';
+import { ApiClientError } from '../api/client';
+import type { ChatbotConfigResponse, ChatbotRule } from '../api/contracts';
+import { ChatbotPreview } from '../chatbot/ChatbotPreview';
+import { ChatbotRuleCard } from '../chatbot/ChatbotRuleCard';
+import {
+  createChatbotRuleClientKey,
+  createEditableRule,
+  findChatbotRuleProblems,
+  reviseChatbotEditSession,
+  toChatbotPayloadRules,
+  toEditableRules,
+  type ChatbotEditSession,
+  type EditableChatbotRule
+} from '../chatbot/editor';
+import { beforeNavigationEvent } from '../routing/navigation';
+
+const chatbotConfigQueryKey = ['chatbot', 'config'] as const;
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : 'Operasi gagal. Coba lagi.';
 
-const comparableRule = (rule: ChatbotRule) =>
-  JSON.stringify({
-    triggerType: rule.triggerType,
-    triggerValues: rule.triggerValues,
-    responseText: rule.responseText,
-    priority: rule.priority,
-    enabled: rule.enabled,
-    action: rule.action
-  });
-
-const versionTone = (status: 'draft' | 'published' | 'archived') =>
-  status === 'published' ? 'success' : status === 'draft' ? 'warning' : 'neutral';
-
-const localProblems = (rules: ChatbotRule[]) => {
-  const problems: string[] = [];
-  if (rules.length < 1 || rules.length > 100) {
-    problems.push('Jumlah rule harus antara 1 dan 100.');
-  }
-  const priorities = rules.map((rule) => rule.priority);
-  if (new Set(priorities).size !== priorities.length) {
-    problems.push('Priority harus unik.');
-  }
-  if (
-    rules.some(
-      (rule) =>
-        !Number.isInteger(rule.priority) ||
-        rule.priority < 0 ||
-        rule.priority > 9999
-    )
-  ) {
-    problems.push('Priority harus berupa angka bulat antara 0 dan 9999.');
-  }
-  if (rules.filter((rule) => rule.enabled && rule.triggerType === 'empty').length !== 1) {
-    problems.push('Harus ada tepat satu empty rule aktif.');
-  }
-  if (rules.filter((rule) => rule.enabled && rule.triggerType === 'fallback').length !== 1) {
-    problems.push('Harus ada tepat satu fallback rule aktif.');
-  }
-  if (rules.some((rule) => !rule.responseText.trim())) {
-    problems.push('Semua response wajib diisi.');
-  }
-  if (
-    rules.some(
-      (rule) =>
-        ['exact', 'alias'].includes(rule.triggerType) &&
-        !rule.triggerValues.some((value) => value.trim())
-    )
-  ) {
-    problems.push('Rule exact dan alias wajib memiliki minimal satu trigger.');
-  }
-  if (
-    rules.some(
-      (rule) =>
-        ['empty', 'fallback'].includes(rule.triggerType) &&
-        rule.triggerValues.some((value) => value.trim())
-    )
-  ) {
-    problems.push('Rule empty dan fallback tidak boleh memiliki trigger.');
-  }
-  if (
-    rules.some(
-      (rule) =>
-        rule.triggerValues.length > 20 ||
-        rule.triggerValues.some((value) => value.trim().length > 100)
-    )
-  ) {
-    problems.push('Maksimal 20 trigger per rule dan 100 karakter per trigger.');
-  }
-  const triggers = rules
-    .filter((rule) => rule.enabled)
-    .flatMap((rule) =>
-      rule.triggerValues.map((value) => value.trim().toLowerCase())
-    )
-    .filter(Boolean);
-  if (new Set(triggers).size !== triggers.length) {
-    problems.push('Trigger aktif tidak boleh duplikat.');
-  }
-  return problems;
-};
-
-const nextAvailablePriority = (rules: ChatbotRule[]) => {
-  const used = new Set(rules.map((rule) => rule.priority));
-  const normalPriorities = rules
-    .filter((rule) => ['exact', 'alias'].includes(rule.triggerType))
-    .map((rule) => rule.priority);
-  const preferredStart = Math.max(0, ...normalPriorities) + 10;
-
-  for (let priority = preferredStart; priority <= 9999; priority += 10) {
-    if (!used.has(priority)) return priority;
-  }
-  for (let priority = 0; priority <= 9999; priority += 1) {
-    if (!used.has(priority)) return priority;
-  }
-  return 9999;
-};
-
-type WorkspaceProps = {
-  detail: ChatbotVersionDetailResponse;
-  activeDetail?: ChatbotVersionDetailResponse;
-  activeVersionId: string;
-  editableDraftExists: boolean;
-  isCreatingDraft: boolean;
-  startEditing: () => void;
-  refresh: () => Promise<void>;
-};
-
-const ChatbotWorkspace = ({
-  detail,
-  activeDetail,
-  activeVersionId,
-  editableDraftExists,
-  isCreatingDraft,
-  startEditing,
-  refresh
-}: WorkspaceProps) => {
+const ChatbotEditor = ({
+  config
+}: {
+  config: ChatbotConfigResponse['data'];
+}) => {
   const queryClient = useQueryClient();
-  const [rules, setRules] = useState<ChatbotRule[]>(detail.data.rules);
-  const [testInput, setTestInput] = useState('menu');
-  const [changeSummary, setChangeSummary] = useState('');
-  const [publishConfirmation, setPublishConfirmation] = useState('');
-  const [rollbackReason, setRollbackReason] = useState('');
-  const [rollbackConfirmation, setRollbackConfirmation] = useState('');
-  const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(
+  const [editSession, setEditSession] = useState<ChatbotEditSession | null>(
     null
   );
-  const version = detail.data.version;
-  const problems = useMemo(() => localProblems(rules), [rules]);
-  const dirty = JSON.stringify(rules) !== JSON.stringify(detail.data.rules);
-  const changedRules = useMemo(() => {
-    if (!activeDetail || version.status === 'published') return 0;
-    const activeByPriority = new Map(
-      activeDetail.data.rules.map((rule) => [rule.priority, rule])
-    );
-    return rules.filter(
-      (rule) =>
-        comparableRule(rule) !==
-        (activeByPriority.get(rule.priority)
-          ? comparableRule(activeByPriority.get(rule.priority)!)
-          : undefined)
-    ).length;
-  }, [activeDetail, rules, version.status]);
+  const [testInput, setTestInput] = useState('menu');
+  const activeRules = useMemo(
+    () => toEditableRules(config.rules),
+    [config.rules]
+  );
+  const editorRules = editSession?.rules ?? activeRules;
+  const payloadRules = useMemo(
+    () => toChatbotPayloadRules(editorRules),
+    [editorRules]
+  );
+  const problems = useMemo(
+    () => findChatbotRuleProblems(payloadRules),
+    [payloadRules]
+  );
+  const dirty = editSession !== null;
+  const remoteAdvanced =
+    editSession !== null && config.revision > editSession.baseRevision;
 
-  const refreshAll = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['chatbot'] });
-    await refresh();
-  };
+  useEffect(() => {
+    if (!dirty) return;
+
+    const preventAccidentalExit = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    const confirmInternalNavigation = (event: Event) => {
+      if (
+        !window.confirm(
+          'Perubahan chatbot belum disimpan. Tinggalkan halaman ini?'
+        )
+      ) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('beforeunload', preventAccidentalExit);
+    window.addEventListener(beforeNavigationEvent, confirmInternalNavigation);
+    return () => {
+      window.removeEventListener('beforeunload', preventAccidentalExit);
+      window.removeEventListener(
+        beforeNavigationEvent,
+        confirmInternalNavigation
+      );
+    };
+  }, [dirty]);
+
   const saveMutation = useMutation({
-    mutationFn: () =>
-      replaceChatbotRules({
-        versionId: version.id,
-        expectedRevision: version.revision,
-        rules
-      }),
-    onSuccess: refreshAll
+    mutationFn: saveChatbotConfig,
+    onMutate: () =>
+      queryClient.cancelQueries({ queryKey: chatbotConfigQueryKey }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(chatbotConfigQueryKey, saved);
+      setEditSession(null);
+    },
+    onError: (error) => {
+      if (error instanceof ApiClientError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: chatbotConfigQueryKey });
+      }
+    }
   });
   const testMutation = useMutation({
-    mutationFn: () => testChatbotRules({ versionId: version.id, input: testInput })
+    mutationFn: testChatbotRules
   });
-  const publishMutation = useMutation({
-    mutationFn: () =>
-      publishChatbotVersion({
-        versionId: version.id,
-        expectedActiveVersionId: activeVersionId,
-        changeSummary,
-        confirmation: publishConfirmation
-      }),
-    onSuccess: refreshAll
-  });
-  const rollbackMutation = useMutation({
-    mutationFn: () =>
-      rollbackChatbotVersion({
-        versionId: version.id,
-        expectedActiveVersionId: activeVersionId,
-        reason: rollbackReason,
-        confirmation: rollbackConfirmation
-      }),
-    onSuccess: refreshAll
-  });
+  const saveErrorMessage =
+    saveMutation.error &&
+    !(
+      saveMutation.error instanceof ApiClientError &&
+      saveMutation.error.status === 409
+    )
+      ? errorMessage(saveMutation.error)
+      : null;
 
-  const updateRule = (index: number, patch: Partial<ChatbotRule>) =>
-    setRules((current) =>
-      current.map((rule, ruleIndex) =>
+  const resetFeedback = () => {
+    saveMutation.reset();
+    testMutation.reset();
+  };
+
+  const reviseRules = (
+    revise: (rules: EditableChatbotRule[]) => EditableChatbotRule[]
+  ) => {
+    resetFeedback();
+    setEditSession((current) =>
+      reviseChatbotEditSession(current, config, revise)
+    );
+  };
+
+  const updateRule = (index: number, patch: Partial<ChatbotRule>) => {
+    reviseRules((rules) =>
+      rules.map((rule, ruleIndex) =>
         ruleIndex === index ? { ...rule, ...patch } : rule
       )
     );
+  };
 
   const addRule = () => {
-    setRules((current) => {
-      const next = [
-        ...current,
-        {
-          triggerType: 'exact' as const,
-          triggerValues: [''],
-          responseText: '',
-          priority: nextAvailablePriority(current),
-          enabled: true,
-          action: 'reply' as const
-        }
-      ];
-      return next.sort((left, right) => left.priority - right.priority);
-    });
-    setPendingDeleteIndex(null);
+    const clientKey = createChatbotRuleClientKey();
+    reviseRules((rules) =>
+      [...rules, createEditableRule(rules, clientKey)].sort(
+        (left, right) => left.priority - right.priority
+      )
+    );
   };
 
   const deleteRule = (index: number) => {
-    setRules((current) =>
-      current.filter((_, ruleIndex) => ruleIndex !== index)
+    reviseRules((rules) =>
+      rules.filter((_, ruleIndex) => ruleIndex !== index)
     );
-    setPendingDeleteIndex(null);
+  };
+
+  const discardChanges = () => {
+    resetFeedback();
+    setEditSession(null);
+  };
+
+  const save = () => {
+    if (!editSession || remoteAdvanced) return;
+    saveMutation.mutate({
+      expectedRevision: editSession.baseRevision,
+      rules: payloadRules
+    });
+  };
+
+  const runTest = () => {
+    testMutation.mutate({ input: testInput, rules: payloadRules });
+  };
+
+  const showTestPanel = () => {
+    const testPanel = document.getElementById('chatbot-test-panel');
+    testPanel?.scrollIntoView({ block: 'start' });
+    testPanel?.focus({ preventScroll: true });
   };
 
   return (
@@ -234,428 +172,136 @@ const ChatbotWorkspace = ({
       <section className="panel chatbot-editor">
         <div className="panel__heading">
           <div>
-            <p className="eyebrow">Rule editor</p>
-            <h2>{version.name}</h2>
-            <small>
-              v{version.versionNumber} · revision {version.revision} ·{' '}
-              {version.ruleCount} rules
-            </small>
+            <p className="eyebrow">Langkah 1 · Edit</p>
+            <h2>Jawaban chatbot</h2>
           </div>
-          <StatusBadge tone={versionTone(version.status)}>
-            {version.status}
-          </StatusBadge>
+          <span className="chatbot-save-state" data-dirty={dirty}>
+            {dirty ? 'Ada perubahan belum disimpan' : 'Konfigurasi aktif'}
+          </span>
         </div>
 
-        {version.status === 'draft' && (
-          <div className="editor-toolbar">
-            <span>
-              {dirty ? 'Perubahan lokal belum disimpan' : 'Draft tersimpan'}
-            </span>
-            <button
-              className="button"
-              disabled={rules.length >= 100}
-              type="button"
-              onClick={addRule}
-            >
-              Tambah rule
-            </button>
-            <button
-              className="button"
-              disabled={!dirty || saveMutation.isPending}
-              type="button"
-              onClick={() => {
-                setRules(detail.data.rules);
-                setPendingDeleteIndex(null);
-              }}
-            >
-              Batalkan perubahan
-            </button>
-            <button
-              className="button button--primary"
-              disabled={
-                !dirty || problems.length > 0 || saveMutation.isPending
-              }
-              type="button"
-              onClick={() => saveMutation.mutate()}
-            >
-              {saveMutation.isPending ? 'Menyimpan…' : 'Simpan draft'}
-            </button>
-          </div>
-        )}
+        <div className="editor-toolbar chatbot-editor__toolbar">
+          <button
+            className="button"
+            disabled={editorRules.length >= 100 || saveMutation.isPending}
+            type="button"
+            onClick={addRule}
+          >
+            Tambah jawaban
+          </button>
+        </div>
 
-        {version.status !== 'draft' && (
-          <div className="editor-readonly">
-            <div>
-              <strong>Versi ini hanya-baca</strong>
-              <span>
-                {editableDraftExists
-                  ? 'Buka draft yang tersedia untuk menambah, mengubah, atau menghapus rule.'
-                  : 'Mulai pengelolaan untuk membuat draft aman dari versi aktif ini.'}
-              </span>
-            </div>
-            <button
-              className="button button--primary"
-              disabled={isCreatingDraft}
-              type="button"
-              onClick={startEditing}
-            >
-              {isCreatingDraft
-                ? 'Menyiapkan draft…'
-                : editableDraftExists
-                  ? 'Buka draft rules'
-                  : 'Kelola rules'}
-            </button>
-          </div>
-        )}
-
-        {problems.length > 0 && version.status === 'draft' && (
+        {problems.length > 0 && (
           <div className="form-alert form-alert--error" role="alert">
             {problems.map((problem) => (
               <span key={problem}>{problem}</span>
             ))}
           </div>
         )}
-        {saveMutation.error && (
+        {remoteAdvanced && (
           <div className="form-alert form-alert--error" role="alert">
-            {errorMessage(saveMutation.error)}
+            Konfigurasi aktif berubah di tab lain. Batalkan perubahan untuk
+            memuat konfigurasi terbaru.
+          </div>
+        )}
+        {saveMutation.isSuccess && (
+          <div className="form-alert form-alert--success" role="status">
+            Konfigurasi aktif berhasil disimpan.
+          </div>
+        )}
+        {saveErrorMessage && (
+          <div className="form-alert form-alert--error" role="alert">
+            {saveErrorMessage}
           </div>
         )}
 
         <div className="rule-list">
-          {rules.map((rule, index) => (
-            <article className="rule-card" key={rule.id ?? `new-${index}`}>
-              <div className="rule-card__heading">
-                <strong>Rule {index + 1}</strong>
-                {version.status === 'draft' && (
-                  <button
-                    aria-label={`Hapus rule ${index + 1}`}
-                    className="rule-card__delete"
-                    type="button"
-                    onClick={() => setPendingDeleteIndex(index)}
-                  >
-                    Hapus
-                  </button>
-                )}
-              </div>
-              <div className="rule-card__meta">
-                <label>
-                  Priority
-                  <input
-                    disabled={version.status !== 'draft'}
-                    min="0"
-                    type="number"
-                    value={rule.priority}
-                    onChange={(event) =>
-                      updateRule(index, { priority: Number(event.target.value) })
-                    }
-                  />
-                </label>
-                <label>
-                  Trigger
-                  <select
-                    disabled={version.status !== 'draft'}
-                    value={rule.triggerType}
-                    onChange={(event) =>
-                      updateRule(index, {
-                        triggerType: event.target
-                          .value as ChatbotRule['triggerType'],
-                        triggerValues: ['empty', 'fallback'].includes(
-                          event.target.value
-                        )
-                          ? []
-                          : rule.triggerValues
-                      })
-                    }
-                  >
-                    <option value="exact">Exact</option>
-                    <option value="alias">Alias</option>
-                    <option value="empty">Empty input</option>
-                    <option value="fallback">Fallback</option>
-                  </select>
-                </label>
-                <label>
-                  Action
-                  <select
-                    disabled={version.status !== 'draft'}
-                    value={rule.action}
-                    onChange={(event) =>
-                      updateRule(index, {
-                        action: event.target.value as ChatbotRule['action']
-                      })
-                    }
-                  >
-                    <option value="reply">Reply</option>
-                    <option value="create_handoff">Reply + handoff</option>
-                  </select>
-                </label>
-                <label className="toggle-label">
-                  <input
-                    checked={rule.enabled}
-                    disabled={version.status !== 'draft'}
-                    type="checkbox"
-                    onChange={(event) =>
-                      updateRule(index, { enabled: event.target.checked })
-                    }
-                  />
-                  Aktif
-                </label>
-              </div>
-              <label>
-                Trigger values
-                <input
-                  disabled={
-                    version.status !== 'draft' ||
-                    ['empty', 'fallback'].includes(rule.triggerType)
-                  }
-                  placeholder="Pisahkan alias dengan koma"
-                  value={rule.triggerValues.join(', ')}
-                  onChange={(event) =>
-                    updateRule(index, {
-                      triggerValues: event.target.value
-                        .split(',')
-                        .map((value) => value.trim())
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Response
-                <textarea
-                  disabled={version.status !== 'draft'}
-                  maxLength={4096}
-                  rows={5}
-                  value={rule.responseText}
-                  onChange={(event) =>
-                    updateRule(index, { responseText: event.target.value })
-                  }
-                />
-              </label>
-              {pendingDeleteIndex === index && (
-                <div className="rule-card__delete-confirm" role="alert">
-                  <span>
-                    Hapus Rule {index + 1} dari draft? Perubahan baru permanen
-                    setelah draft disimpan.
-                  </span>
-                  <div>
-                    <button
-                      className="button"
-                      type="button"
-                      onClick={() => setPendingDeleteIndex(null)}
-                    >
-                      Batal
-                    </button>
-                    <button
-                      className="button button--danger"
-                      type="button"
-                      onClick={() => deleteRule(index)}
-                    >
-                      Ya, hapus rule
-                    </button>
-                  </div>
-                </div>
-              )}
-            </article>
+          {editorRules.map((rule, index) => (
+            <ChatbotRuleCard
+              disabled={saveMutation.isPending}
+              index={index}
+              key={rule.clientKey}
+              rule={rule}
+              onChange={(patch) => updateRule(index, patch)}
+              onDelete={() => deleteRule(index)}
+            />
           ))}
         </div>
-      </section>
 
-      <aside className="chatbot-tools">
-        <section className="panel">
-          <p className="eyebrow">Dry-run · tidak mengirim pesan</p>
-          <h2>Test console</h2>
-          {dirty && (
-            <p className="tool-hint">
-              Simpan draft dulu agar test memakai perubahan terbaru.
-            </p>
-          )}
-          <textarea
-            aria-label="Input test chatbot"
-            maxLength={4096}
-            rows={3}
-            value={testInput}
-            onChange={(event) => setTestInput(event.target.value)}
-          />
+        <footer
+          aria-label="Simpan konfigurasi chatbot"
+          className="editor-toolbar chatbot-action-bar"
+        >
+          <div className="chatbot-action-bar__copy">
+            <strong>Langkah 3 · Simpan & aktifkan</strong>
+            <span className="tool-hint">
+              Pastikan hasil pengujian sudah sesuai sebelum mengaktifkannya.
+            </span>
+          </div>
+          <button
+            className="button chatbot-action-bar__test"
+            onClick={showTestPanel}
+            type="button"
+          >
+            Uji perubahan
+          </button>
           <button
             className="button"
-            disabled={dirty || testMutation.isPending}
+            disabled={!dirty || saveMutation.isPending}
             type="button"
-            onClick={() => testMutation.mutate()}
+            onClick={discardChanges}
           >
-            {testMutation.isPending ? 'Menguji…' : 'Jalankan test'}
+            Batalkan perubahan
           </button>
-          {testMutation.data && (
-            <div className="test-result" aria-live="polite">
-              <dl>
-                <div>
-                  <dt>Normalized</dt>
-                  <dd>{testMutation.data.data.normalizedInput || '(empty)'}</dd>
-                </div>
-                <div>
-                  <dt>Matched</dt>
-                  <dd>
-                    {testMutation.data.data.matchedRule.triggerType} · priority{' '}
-                    {testMutation.data.data.matchedRule.priority}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Version</dt>
-                  <dd>v{testMutation.data.data.versionNumber}</dd>
-                </div>
-              </dl>
-              <pre>{testMutation.data.data.response}</pre>
-            </div>
-          )}
-          {testMutation.error && (
-            <div className="form-alert form-alert--error">
-              {errorMessage(testMutation.error)}
-            </div>
-          )}
-        </section>
+          <button
+            aria-label="Simpan & aktifkan"
+            className="button button--primary"
+            disabled={
+              !dirty ||
+              remoteAdvanced ||
+              problems.length > 0 ||
+              saveMutation.isPending
+            }
+            type="button"
+            onClick={save}
+          >
+            {saveMutation.isPending ? 'Menyimpan…' : 'Simpan & aktifkan'}
+          </button>
+        </footer>
+      </section>
 
-        {version.status === 'draft' && (
-          <section className="panel publish-panel">
-            <p className="eyebrow">Protected publish</p>
-            <h2>Publish draft</h2>
-            <p className="tool-hint">
-              Diff terhadap active: {changedRules} rule berubah,{' '}
-              {rules.length - (activeDetail?.data.rules.length ?? 0)} net rule.
-            </p>
-            <label>
-              Ringkasan perubahan
-              <textarea
-                maxLength={500}
-                rows={3}
-                value={changeSummary}
-                onChange={(event) => setChangeSummary(event.target.value)}
-              />
-            </label>
-            <label>
-              Ketik PUBLISH
-              <input
-                autoComplete="off"
-                value={publishConfirmation}
-                onChange={(event) => setPublishConfirmation(event.target.value)}
-              />
-            </label>
-            <button
-              className="button button--primary"
-              disabled={
-                dirty ||
-                problems.length > 0 ||
-                changeSummary.trim().length < 5 ||
-                publishConfirmation !== 'PUBLISH' ||
-                publishMutation.isPending
-              }
-              type="button"
-              onClick={() => publishMutation.mutate()}
-            >
-              {publishMutation.isPending ? 'Publishing…' : 'Publish version'}
-            </button>
-            {publishMutation.error && (
-              <div className="form-alert form-alert--error">
-                {errorMessage(publishMutation.error)}
-              </div>
-            )}
-          </section>
-        )}
-
-        {version.status === 'archived' && version.publishedAt && (
-          <section className="panel publish-panel">
-            <p className="eyebrow">Protected rollback</p>
-            <h2>Rollback ke v{version.versionNumber}</h2>
-            <label>
-              Alasan rollback
-              <textarea
-                maxLength={500}
-                rows={3}
-                value={rollbackReason}
-                onChange={(event) => setRollbackReason(event.target.value)}
-              />
-            </label>
-            <label>
-              Ketik ROLLBACK
-              <input
-                autoComplete="off"
-                value={rollbackConfirmation}
-                onChange={(event) => setRollbackConfirmation(event.target.value)}
-              />
-            </label>
-            <button
-              className="button button--danger"
-              disabled={
-                rollbackReason.trim().length < 5 ||
-                rollbackConfirmation !== 'ROLLBACK' ||
-                rollbackMutation.isPending
-              }
-              type="button"
-              onClick={() => rollbackMutation.mutate()}
-            >
-              {rollbackMutation.isPending ? 'Rolling back…' : 'Rollback'}
-            </button>
-            {rollbackMutation.error && (
-              <div className="form-alert form-alert--error">
-                {errorMessage(rollbackMutation.error)}
-              </div>
-            )}
-          </section>
-        )}
-      </aside>
+      <ChatbotPreview
+        disabled={problems.length > 0 || saveMutation.isPending}
+        errorMessage={
+          testMutation.error ? errorMessage(testMutation.error) : undefined
+        }
+        input={testInput}
+        isPending={testMutation.isPending}
+        result={testMutation.data}
+        onInputChange={(value) => {
+          testMutation.reset();
+          setTestInput(value);
+        }}
+        onRun={runTest}
+      />
     </div>
   );
 };
 
 export const ChatbotRulesPage = () => {
-  const queryClient = useQueryClient();
-  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(
-    null
-  );
-  const [draftName, setDraftName] = useState('');
-  const versions = useQuery({
-    queryKey: ['chatbot', 'versions'],
-    queryFn: listChatbotVersions
+  const config = useQuery({
+    queryKey: chatbotConfigQueryKey,
+    queryFn: getChatbotConfig
   });
-  const active = versions.data?.data.find(
-    (version) => version.status === 'published'
-  );
-  const editableDraft = versions.data?.data.find(
-    (version) => version.status === 'draft'
-  );
-  const selectedId =
-    selectedVersionId ?? active?.id ?? versions.data?.data[0]?.id ?? null;
-  const detail = useQuery({
-    queryKey: ['chatbot', 'version', selectedId],
-    queryFn: () => getChatbotVersion(selectedId!),
-    enabled: Boolean(selectedId)
-  });
-  const activeDetail = useQuery({
-    queryKey: ['chatbot', 'version', active?.id],
-    queryFn: () => getChatbotVersion(active!.id),
-    enabled: Boolean(active?.id && active.id !== selectedId)
-  });
-  const createMutation = useMutation({
-    mutationFn: () => createChatbotDraft(draftName.trim() || 'Draft perubahan'),
-    onSuccess: async (created) => {
-      setSelectedVersionId(created.data.version.id);
-      setDraftName('');
-      await queryClient.invalidateQueries({ queryKey: ['chatbot'] });
-    }
-  });
-  const startEditing = () => {
-    if (editableDraft) {
-      setSelectedVersionId(editableDraft.id);
-      return;
-    }
-    createMutation.mutate();
-  };
 
-  if (versions.isPending) {
-    return <section className="page-state">Memuat chatbot rules…</section>;
+  if (config.isPending) {
+    return <section className="page-state">Memuat konfigurasi chatbot…</section>;
   }
-  if (versions.error || !active) {
+  if (config.error || !config.data) {
     return (
       <section className="page-state page-state--error">
-        <h1>Chatbot rules tidak tersedia</h1>
-        <p>{errorMessage(versions.error)}</p>
+        <h1>Konfigurasi chatbot tidak tersedia</h1>
+        <p>{errorMessage(config.error)}</p>
       </section>
     );
   }
@@ -664,91 +310,12 @@ export const ChatbotRulesPage = () => {
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 5 · Versioned configuration</p>
-          <h1>Chatbot rule management</h1>
-          <p>
-            Edit draft, verifikasi response, lalu publish tanpa mengubah source
-            code.
-          </p>
-        </div>
-        <div className="new-draft">
-          <input
-            aria-label="Nama draft"
-            maxLength={150}
-            placeholder="Nama draft"
-            value={draftName}
-            onChange={(event) => setDraftName(event.target.value)}
-          />
-          <button
-            className="button button--primary"
-            disabled={createMutation.isPending}
-            type="button"
-            onClick={() => createMutation.mutate()}
-          >
-            {createMutation.isPending ? 'Membuat…' : 'Buat draft dari active'}
-          </button>
+          <p className="eyebrow">Satu konfigurasi aktif</p>
+          <h1>Chatbot</h1>
+          <p>Edit jawaban, uji dengan contoh pesan, lalu simpan dan aktifkan.</p>
         </div>
       </header>
-      {createMutation.error && (
-        <div className="form-alert form-alert--error">
-          {errorMessage(createMutation.error)}
-        </div>
-      )}
-
-      <div className="chatbot-layout">
-        <aside className="panel version-history">
-          <div className="panel__heading">
-            <div>
-              <p className="eyebrow">Immutable history</p>
-              <h2>Versions</h2>
-            </div>
-          </div>
-          <div className="version-list">
-            {versions.data.data.map((version) => (
-              <button
-                data-active={selectedId === version.id}
-                key={version.id}
-                type="button"
-                onClick={() => setSelectedVersionId(version.id)}
-              >
-                <span>
-                  <strong>v{version.versionNumber}</strong>
-                  <small>{version.name}</small>
-                </span>
-                <StatusBadge tone={versionTone(version.status)}>
-                  {version.status}
-                </StatusBadge>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        {detail.isPending ? (
-          <section className="page-state">Memuat version…</section>
-        ) : detail.data ? (
-          <ChatbotWorkspace
-            activeDetail={
-              detail.data.data.version.status === 'published'
-                ? detail.data
-                : activeDetail.data
-            }
-            activeVersionId={active.id}
-            detail={detail.data}
-            editableDraftExists={Boolean(editableDraft)}
-            isCreatingDraft={createMutation.isPending}
-            key={`${detail.data.data.version.id}:${detail.data.data.version.revision}:${detail.data.data.version.status}`}
-            startEditing={startEditing}
-            refresh={async () => {
-              await versions.refetch();
-              await detail.refetch();
-            }}
-          />
-        ) : (
-          <section className="page-state page-state--error">
-            {errorMessage(detail.error)}
-          </section>
-        )}
-      </div>
+      <ChatbotEditor config={config.data.data} />
     </section>
   );
 };

@@ -1,9 +1,9 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { login } from '../api/auth';
-import { currentAdminQueryKey } from '../api/queries';
 import { ApiClientError } from '../api/client';
 import { navigate, safeReturnPath } from '../routing/navigation';
+import { replaceAuthenticatedCache } from '../api/authenticated-cache';
 
 type LoginPageProps = {
   sessionExpired?: boolean;
@@ -15,8 +15,8 @@ export const LoginPage = ({ sessionExpired = false }: LoginPageProps) => {
   const [password, setPassword] = useState('');
   const mutation = useMutation({
     mutationFn: login,
-    onSuccess: (session) => {
-      queryClient.setQueryData(currentAdminQueryKey, session);
+    onSuccess: async (session) => {
+      await replaceAuthenticatedCache(queryClient, session);
       navigate(safeReturnPath(window.location.search), true);
     }
   });
@@ -33,17 +33,25 @@ export const LoginPage = ({ sessionExpired = false }: LoginPageProps) => {
     <main className="login-page">
       <section className="login-card" aria-labelledby="login-title">
         <div className="brand brand--login">
-          <span className="brand__mark" aria-hidden="true">W</span>
+          <span className="brand__mark" aria-hidden="true">
+            <img
+              alt=""
+              className="brand__logo"
+              height="32"
+              src="/whatsapp.svg"
+              width="32"
+            />
+          </span>
           <span>
             <strong>Control Room</strong>
-            <small>WhatsApp Operations</small>
+            <small>Operasional WhatsApp</small>
           </span>
         </div>
-        <p className="eyebrow">Secure admin access</p>
+        <p className="eyebrow">Akses admin</p>
         <h1 id="login-title">Masuk ke control panel</h1>
         <p className="login-card__intro">
-          Gunakan akun admin backend. Credential dan session tidak disimpan di
-          local storage browser.
+          Gunakan akun admin Anda untuk mengelola koneksi, pesan, dan chatbot.
+          Password tidak disimpan di browser.
         </p>
 
         {sessionExpired && (

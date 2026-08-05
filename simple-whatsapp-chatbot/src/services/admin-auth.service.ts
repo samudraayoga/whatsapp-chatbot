@@ -9,6 +9,7 @@ import {
 import type {
   AdminIdentity,
   AuthenticatedAdmin,
+  BootstrapAdminConfig,
   LoginResult
 } from '../auth/types.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
@@ -60,11 +61,17 @@ export class AdminAuthService {
     this.now = options.now ?? (() => new Date());
   }
 
-  async ensureBootstrapAdmin(input: {
-    username: string;
-    password: string;
-    displayName: string;
-  }): Promise<void> {
+  async ensureBootstrapAdmins(
+    accounts: readonly BootstrapAdminConfig[]
+  ): Promise<void> {
+    for (const account of accounts) {
+      await this.ensureBootstrapAdmin(account);
+    }
+  }
+
+  private async ensureBootstrapAdmin(
+    input: BootstrapAdminConfig
+  ): Promise<void> {
     const existing = await this.database.query<{ id: string }>(
       'SELECT id FROM admin_users WHERE username = $1 LIMIT 1;',
       [input.username]

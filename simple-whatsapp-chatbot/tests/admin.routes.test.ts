@@ -11,9 +11,20 @@ import type { ChatbotService } from '../src/services/chatbot.service.js';
 import type { SafetyCenterService } from '../src/services/safety-center.service.js';
 import type { OverviewService } from '../src/services/overview.service.js';
 import {
+  TenantContextResolutionError,
+  type TenantContextService
+} from '../src/services/tenant-context.service.js';
+import type { AiChatbotService } from '../src/services/ai-chatbot.service.js';
+import type { KnowledgeService } from '../src/services/knowledge.service.js';
+import type { DocumentService } from '../src/services/document.service.js';
+import type { AiRagRuntimeService } from '../src/services/ai-rag-runtime.service.js';
+import type { AiOperationsService } from '../src/services/ai-operations.service.js';
+import { AppError } from '../src/middleware/error.middleware.js';
+import {
   ReconnectNotAllowedError,
   type WhatsAppService
 } from '../src/services/whatsapp.service.js';
+import { env } from '../src/config/env.js';
 
 const admin: AuthenticatedAdmin = {
   id: '2a99543d-80d5-47a0-92ef-a389ce1a3001',
@@ -98,6 +109,15 @@ const openHandoff = {
   dueAt: '2026-07-31T03:00:00.000Z',
   resolvedAt: null,
   resolutionNote: null,
+  tenantId: '00000000-0000-4000-8000-000000000001',
+  aiConversationId: '56aeb539-514a-4eb0-a44c-5f34cc29e5a2',
+  aiMessageTraceId: 'f03c6dbb-5e82-47d6-b6b9-7aa0113456b1',
+  reason: 'customer_interested',
+  priority: 'normal' as const,
+  summary: 'Customer meminta langkah berikutnya.',
+  knowledgeIds: [],
+  safetyCategory: 'normal_faq',
+  traceId: 'trace_sprint_5',
   createdAt: '2026-07-30T03:00:00.000Z',
   updatedAt: '2026-07-30T03:00:00.000Z',
   contact: {
@@ -110,8 +130,207 @@ const openHandoff = {
 const logicalMessageId = '59942ce7-4f15-4a8b-9448-a98f39d70d10';
 const outboxId = '2ddb725d-56c0-4708-8d81-1b868a3e8bd9';
 const activeChatbotVersionId = '3ca59c93-89f4-4c34-bb27-7d9e0887781b';
-const draftChatbotVersionId = '820eff36-f95f-45e0-a993-d39a36b74452';
 const chatbotRuleId = 'ec53bfd2-a990-4e1a-866c-45145ee96c93';
+const aiIntegration = {
+  id: '37b38a20-371f-4e9a-9d4a-b8df5f546acd',
+  tenantId: '00000000-0000-4000-8000-000000000001',
+  name: 'RAHO AI',
+  provider: 'mock',
+  chatModel: 'mock-chat-v1',
+  embeddingProvider: 'mock',
+  embeddingModel: 'mock-embed-v1',
+  embeddingDimensions: 8,
+  secretReferenceConfigured: true,
+  active: false,
+  effectiveEnabled: false as const,
+  strictGrounding: true as const,
+  maxResponseTokens: 500,
+  temperature: 0.1,
+  timeoutMs: 15000,
+  retryCount: 1,
+  retrieval: {
+    topK: 5,
+    finalContextCount: 3,
+    minimumSimilarity: null,
+    maximumContextTokens: null,
+    keywordSearchEnabled: false,
+    rerankerEnabled: false
+  },
+  featureFlags: {
+    documentUpload: false,
+    autoHandoff: false,
+    analytics: false
+  },
+  revision: 1,
+  updatedAt: '2026-08-05T01:00:00.000Z'
+};
+const aiReadiness = {
+  effectiveEnabled: false as const,
+  blockers: [
+    {
+      code: 'GLOBAL_RUNTIME_HARD_OFF',
+      message: 'Customer runtime is not implemented.'
+    }
+  ],
+  dependencies: {
+    vectorStore: 'reachable' as const,
+    queue: 'reachable' as const,
+    objectStorage: 'reachable' as const,
+    chatProvider: 'reachable' as const,
+    embeddingProvider: 'reachable' as const,
+    checkedAt: '2026-08-05T01:00:00.000Z'
+  },
+  publishedPromptConfigured: false
+};
+const aiPrompt = {
+  id: '2502fb9f-7007-457b-a318-a3a1a64e8bc4',
+  tenantId: aiIntegration.tenantId,
+  name: 'FAQ Indonesia',
+  version: 1,
+  status: 'draft' as const,
+  primaryLanguage: 'id',
+  tone: 'hangat',
+  systemInstruction:
+    'Jawab hanya berdasarkan knowledge resmi yang diberikan kepada model.',
+  fallbackMessage: 'Informasi belum tersedia di Knowledge Base RAHO.',
+  handoffMessage: 'Pertanyaan akan diteruskan kepada Admin RAHO.',
+  disclaimerText: null,
+  maxAnswerLength: 800,
+  createdBy: admin.id,
+  approvedBy: null,
+  createdAt: '2026-08-05T01:00:00.000Z',
+  approvedAt: null,
+  publishedAt: null
+};
+const aiIntegrationUpdateInput = {
+  expectedRevision: 1,
+  name: 'RAHO AI',
+  provider: 'mock',
+  chatModel: 'mock-chat-v1',
+  embeddingProvider: 'mock',
+  embeddingModel: 'mock-embed-v1',
+  embeddingDimensions: 8,
+  secretReference: 'env://AI_CHATBOT_MOCK_KEY',
+  strictGrounding: true,
+  maxResponseTokens: 500,
+  temperature: 0.1,
+  timeoutMs: 15000,
+  retryCount: 1,
+  retrieval: aiIntegration.retrieval,
+  featureFlags: aiIntegration.featureFlags
+};
+const knowledgeCategory = {
+  id: 'b1fc4d88-b493-4f49-a8f0-f03ac965db2c',
+  tenantId: aiIntegration.tenantId,
+  name: 'Kesehatan dan Kelayakan',
+  slug: 'kesehatan-dan-kelayakan',
+  description: null,
+  active: true,
+  sortOrder: 7,
+  revision: 1,
+  knowledgeCount: 1,
+  createdAt: '2026-08-05T02:00:00.000Z',
+  updatedAt: '2026-08-05T02:00:00.000Z'
+};
+const knowledgeItem = {
+  id: '8892899c-b84c-4afb-9d13-174fea4ff09b',
+  tenantId: aiIntegration.tenantId,
+  categoryId: knowledgeCategory.id,
+  categoryName: knowledgeCategory.name,
+  sourceType: 'faq' as const,
+  versionId: '196c11bf-843b-4fe6-847f-f3665d1f115f',
+  version: 1,
+  revision: 1,
+  status: 'draft' as const,
+  title: 'Keamanan terapi untuk lansia',
+  question: 'Apakah terapi RAHO aman untuk lansia?',
+  questionVariants: ['Orang tua boleh ikut?'],
+  content: 'Jawaban resmi RAHO.',
+  sourceReference: 'SOP layanan RAHO',
+  internalNotes: null,
+  tags: ['lansia'],
+  metadata: {},
+  contentFingerprint: 'a'.repeat(64),
+  requiresDisclaimer: true,
+  priority: 20,
+  validFrom: null,
+  validUntil: null,
+  expired: false,
+  createdBy: admin.id,
+  approvedBy: null,
+  publishedBy: null,
+  changeReason: null,
+  createdAt: '2026-08-05T02:00:00.000Z',
+  updatedAt: '2026-08-05T02:00:00.000Z',
+  approvedAt: null,
+  publishedAt: null
+};
+const knowledgeWriteInput = {
+  categoryId: knowledgeCategory.id,
+  sourceType: 'faq',
+  title: knowledgeItem.title,
+  question: knowledgeItem.question,
+  questionVariants: knowledgeItem.questionVariants,
+  content: knowledgeItem.content,
+  sourceReference: knowledgeItem.sourceReference,
+  internalNotes: null,
+  tags: knowledgeItem.tags,
+  metadata: {},
+  requiresDisclaimer: true,
+  priority: 20,
+  validFrom: null,
+  validUntil: null
+};
+const knowledgeDocument = {
+  id: '03d5c308-8124-4d65-b8ab-2ba94691de09',
+  tenantId: aiIntegration.tenantId,
+  categoryId: knowledgeCategory.id,
+  categoryName: knowledgeCategory.name,
+  filename: 'panduan.txt',
+  mimeType: 'text/plain',
+  extension: 'txt',
+  fileSize: 64,
+  contentSha256: 'c'.repeat(64),
+  status: 'uploaded' as const,
+  processingRevision: 0,
+  attemptCount: 0,
+  extractedCharacterCount: 0,
+  pageCount: null,
+  totalChunks: 0,
+  errorCode: null,
+  errorMessage: null,
+  uploadedBy: admin.id,
+  uploadedByName: admin.displayName,
+  createdAt: '2026-08-05T03:00:00.000Z',
+  updatedAt: '2026-08-05T03:00:00.000Z',
+  processedAt: null
+};
+const candidateChatbotRules = [
+  {
+    triggerType: 'empty',
+    triggerValues: [],
+    responseText: 'Please send a message',
+    priority: 0,
+    enabled: true,
+    action: 'reply'
+  },
+  {
+    triggerType: 'exact',
+    triggerValues: ['menu'],
+    responseText: 'Unsaved menu',
+    priority: 10,
+    enabled: true,
+    action: 'reply'
+  },
+  {
+    triggerType: 'fallback',
+    triggerValues: [],
+    responseText: 'Fallback',
+    priority: 1000,
+    enabled: true,
+    action: 'reply'
+  }
+];
 
 const createTestApp = (options: {
   authenticated?: AuthenticatedAdmin | null;
@@ -119,6 +338,12 @@ const createTestApp = (options: {
   pairingQr?: { qr: string; expiresAt: string } | null;
   reconnectError?: Error;
   contactExists?: boolean;
+  aiChatbotService?: AiChatbotService;
+  knowledgeService?: KnowledgeService;
+  documentService?: DocumentService;
+  aiRagRuntimeService?: AiRagRuntimeService;
+  aiOperationsService?: AiOperationsService;
+  tenantContextService?: TenantContextService;
 } = {}) => {
   const whatsappService = {
     getStatus: vi.fn(() => 'disconnected'),
@@ -156,6 +381,167 @@ const createTestApp = (options: {
   const auditService = {
     record: vi.fn(async () => undefined)
   } as unknown as AuditService;
+  const authenticatedAdmin =
+    options.authenticated === undefined ? admin : options.authenticated;
+  const tenantContextService = options.tenantContextService ?? ({
+    resolveForAdmin: vi.fn(async () => ({
+      tenantId: '00000000-0000-4000-8000-000000000001',
+      slug: 'raho',
+      name: 'RAHO',
+      permissions: authenticatedAdmin?.permissions.includes('chatbot.manage')
+        ? [
+            'ai.settings.read',
+            'ai.settings.manage',
+            'ai.prompts.read',
+            'ai.prompts.manage',
+            'ai.prompts.approve',
+            'ai.playground.use',
+            'ai.logs.read',
+            'ai.feedback.manage',
+            'ai.unanswered.manage',
+            'ai.evaluations.manage',
+            'knowledge.read',
+            'knowledge.edit',
+            'knowledge.review',
+            'knowledge.publish',
+            'knowledge.categories.manage'
+          ]
+        : []
+    }))
+  } as unknown as TenantContextService);
+  const aiChatbotService = options.aiChatbotService ?? ({
+    getIntegration: vi.fn(async () => aiIntegration),
+    getReadiness: vi.fn(async () => aiReadiness),
+    updateIntegration: vi.fn(async () => ({
+      before: aiIntegration,
+      after: { ...aiIntegration, revision: 2 }
+    })),
+    testConnection: vi.fn(async () => ({
+      chatProvider: 'reachable' as const,
+      embeddingProvider: 'reachable' as const,
+      testedAt: '2026-08-05T01:00:00.000Z'
+    })),
+    activate: vi.fn(async () => {
+      throw new AppError(
+        'AI activation remains blocked',
+        409,
+        'AI_ACTIVATION_BLOCKED',
+        { blockers: aiReadiness.blockers }
+      );
+    }),
+    deactivate: vi.fn(async () => ({
+      before: aiIntegration,
+      after: { ...aiIntegration, revision: 2 }
+    })),
+    listPrompts: vi.fn(async () => ({ data: [aiPrompt], nextCursor: null })),
+    createPrompt: vi.fn(async () => aiPrompt),
+    approvePrompt: vi.fn(async () => ({
+      ...aiPrompt,
+      status: 'approved' as const,
+      approvedBy: admin.id,
+      approvedAt: '2026-08-05T02:00:00.000Z'
+    })),
+    publishPrompt: vi.fn(async () => ({
+      ...aiPrompt,
+      status: 'published' as const,
+      publishedAt: '2026-08-05T03:00:00.000Z'
+    }))
+  } as unknown as AiChatbotService);
+  const knowledgeService = options.knowledgeService ?? ({
+    listCategories: vi.fn(async () => [knowledgeCategory]),
+    createCategory: vi.fn(async () => knowledgeCategory),
+    updateCategory: vi.fn(async () => ({
+      before: knowledgeCategory,
+      after: { ...knowledgeCategory, revision: 2 }
+    })),
+    deleteCategory: vi.fn(async () => knowledgeCategory),
+    listKnowledge: vi.fn(async () => ({ data: [knowledgeItem], nextCursor: null })),
+    getKnowledge: vi.fn(async () => knowledgeItem),
+    createKnowledge: vi.fn(async () => knowledgeItem),
+    updateKnowledge: vi.fn(async () => ({
+      before: knowledgeItem,
+      after: { ...knowledgeItem, revision: 2 },
+      createdVersion: false
+    })),
+    deleteDraft: vi.fn(async () => knowledgeItem),
+    transitionKnowledge: vi.fn(async () => ({
+      before: knowledgeItem,
+      after: { ...knowledgeItem, status: 'review' as const, revision: 2 }
+    })),
+    bulkAction: vi.fn(async () => [{ ...knowledgeItem, status: 'published' as const }])
+  } as unknown as KnowledgeService);
+  const documentService = options.documentService ?? ({
+    upload: vi.fn(async () => knowledgeDocument),
+    list: vi.fn(async () => ({ data: [knowledgeDocument], nextCursor: null })),
+    get: vi.fn(async () => knowledgeDocument),
+    preview: vi.fn(async () => ({
+      document: knowledgeDocument,
+      extractionPreview: 'Informasi resmi RAHO.',
+      chunks: []
+    })),
+    enqueueDocument: vi.fn(async () => ({
+      ...knowledgeDocument,
+      status: 'queued' as const,
+      processingRevision: 1
+    })),
+    archive: vi.fn(async () => ({ ...knowledgeDocument, status: 'archived' as const })),
+    delete: vi.fn(async () => knowledgeDocument),
+    searchTest: vi.fn(async () => []),
+    enqueueKnowledgeIndex: vi.fn(async () => true),
+    enqueueCurrentPublishedKnowledge: vi.fn(async () => true),
+    deactivateKnowledge: vi.fn(async () => undefined)
+  } as unknown as DocumentService);
+  const aiRagRuntimeService = options.aiRagRuntimeService ?? ({
+    respond: vi.fn(async () => ({
+      conversationId: '56aeb539-514a-4eb0-a44c-5f34cc29e5a2',
+      reply: 'Jawaban grounded dari knowledge resmi.',
+      answerStatus: 'supported' as const,
+      requiresDisclaimer: false,
+      customerInterest: false,
+      handoff: false,
+      handoffReason: null,
+      usedKnowledge: [],
+      retrievedKnowledge: [],
+      traceId: 'af924761-829f-41b3-ac80-01163852cb76',
+      model: 'mock-chat-v1',
+      promptVersionId: '2502fb9f-7007-457b-a318-a3a1a64e8bc4',
+      inputTokens: 20,
+      outputTokens: 8,
+      retrievalLatencyMs: 2,
+      providerLatencyMs: 3,
+      latencyMs: 7,
+      validationStatus: 'validated' as const,
+      providerCalled: true,
+      idempotentReplay: false
+    }))
+  } as unknown as AiRagRuntimeService);
+  const aiOperationsService = options.aiOperationsService ?? ({
+    listConversations: vi.fn(async () => ({ data: [{
+      id: '56aeb539-514a-4eb0-a44c-5f34cc29e5a2', contactId: '42',
+      customer: { displayName: 'Rina', maskedIdentifier: '6281***890' },
+      channel: 'playground', channelSessionId: 'session', status: 'active',
+      topic: 'FAQ', interested: false, summary: 'Pertanyaan FAQ', lastKnowledgeIds: [],
+      handoffStatus: null, traceCount: 1, fallbackCount: 0, handoff: false,
+      lastAnswerStatus: 'supported', lastModel: 'mock-chat-v1',
+      lastTraceId: 'af924761-829f-41b3-ac80-01163852cb76', reviewedBy: null,
+      startedAt: '2026-08-05T01:00:00.000Z', lastMessageAt: '2026-08-05T01:00:00.000Z', closedAt: null
+    }], nextCursor: null })),
+    getConversation: vi.fn(async () => ({ id: '56aeb539-514a-4eb0-a44c-5f34cc29e5a2' })),
+    listConversationMessages: vi.fn(async () => ({ data: [], nextCursor: null })),
+    saveFeedback: vi.fn(async (_tenant: string, _trace: string, reviewerId: string) => ({
+      id: 'b44c102a-b311-40ac-8080-f8a86fcfe3c1', type: 'correct', comment: null,
+      correctKnowledgeIds: [], suggestedAnswer: null, reviewerId,
+      reviewedAt: '2026-08-05T01:00:00.000Z'
+    })),
+    listUnanswered: vi.fn(async () => ({ data: [], nextCursor: null })),
+    updateUnanswered: vi.fn(async () => ({ id: 'bd5875bf-c78f-492f-a736-886aedf219b9', status: 'reviewing' })),
+    createKnowledgeFromUnanswered: vi.fn(async () => ({ unanswered: { status: 'knowledge_created' }, knowledge: knowledgeItem })),
+    listTestCases: vi.fn(async () => []),
+    createTestCase: vi.fn(async () => ({ id: 'ea9f426f-17bd-47f7-a260-6017017fdd46', name: 'FAQ test' })),
+    updateTestCase: vi.fn(async () => ({ id: 'ea9f426f-17bd-47f7-a260-6017017fdd46', name: 'FAQ test' })),
+    runTestCase: vi.fn(async () => ({ id: '12c0a68b-7483-416c-803a-2589cf4aac84', passed: true })),
+    runBatch: vi.fn(async () => ({ total: 1, passed: 1, failed: 0, passRate: 1, runs: [] }))
+  } as unknown as AiOperationsService);
   const overviewService = {
     getOverview: vi.fn(async () => overview)
   } as unknown as OverviewService;
@@ -221,6 +607,13 @@ const createTestApp = (options: {
       state: 'resolved' as const,
       resolvedAt: '2026-07-30T04:00:00.000Z',
       resolutionNote
+    })),
+    markInProgress: vi.fn(async (_id: string, assigneeUserId: string) => ({
+      ...openHandoff, state: 'in_progress' as const, assigneeUserId
+    })),
+    close: vi.fn(async (_id: string, resolutionNote: string) => ({
+      ...openHandoff, state: 'closed' as const, resolutionNote,
+      resolvedAt: '2026-07-30T04:00:00.000Z'
     }))
   } as unknown as HandoffService;
   const outboxService = {
@@ -245,23 +638,9 @@ const createTestApp = (options: {
       state: 'failed'
     }))
   } as unknown as OutboxService;
-  const chatbotDetail = {
-    version: {
-      id: draftChatbotVersionId,
-      versionNumber: 2,
-      name: 'Draft v2',
-      status: 'draft' as const,
-      changeSummary: null,
-      basedOnVersionId: activeChatbotVersionId,
-      revision: 0,
-      contentHash: 'draft-hash',
-      createdBy: admin.id,
-      publishedBy: null,
-      createdAt: '2026-07-30T03:00:00.000Z',
-      updatedAt: '2026-07-30T03:00:00.000Z',
-      publishedAt: null,
-      ruleCount: 1
-    },
+  const chatbotConfig = {
+    revision: 3,
+    updatedAt: '2026-07-30T03:00:00.000Z',
     rules: [
       {
         id: chatbotRuleId,
@@ -275,19 +654,18 @@ const createTestApp = (options: {
     ]
   };
   const chatbotService = {
-    listVersions: vi.fn(async () => [chatbotDetail.version]),
-    getVersion: vi.fn(async () => chatbotDetail),
-    createDraft: vi.fn(async () => chatbotDetail),
-    replaceDraftRules: vi.fn(async () => ({
-      ...chatbotDetail,
-      version: { ...chatbotDetail.version, revision: 1 }
+    getConfig: vi.fn(async () => chatbotConfig),
+    updateConfig: vi.fn(async () => ({
+      config: { ...chatbotConfig, revision: 4 },
+      audit: {
+        resourceId: activeChatbotVersionId,
+        before: { revision: 3, contentHash: 'old-hash', ruleCount: 1 },
+        after: { revision: 4, contentHash: 'new-hash', ruleCount: 1 }
+      }
     })),
-    evaluate: vi.fn(async (input: string) => ({
-      versionId: draftChatbotVersionId,
-      versionNumber: 2,
+    preview: vi.fn((input: string) => ({
       normalizedInput: input.trim().toLowerCase(),
       matchedRule: {
-        id: chatbotRuleId,
         triggerType: 'fallback',
         priority: 1000,
         matchedTrigger: null,
@@ -295,14 +673,7 @@ const createTestApp = (options: {
       },
       response: 'Fallback'
     })),
-    publish: vi.fn(async () => ({
-      ...chatbotDetail,
-      version: { ...chatbotDetail.version, status: 'published' }
-    })),
-    rollback: vi.fn(async () => ({
-      ...chatbotDetail,
-      version: { ...chatbotDetail.version, status: 'published' }
-    }))
+    evaluate: vi.fn()
   } as unknown as ChatbotService;
   const safetySnapshot = {
     effectivePaused: true,
@@ -446,7 +817,13 @@ const createTestApp = (options: {
       handoffService,
       outboxService,
       chatbotService,
-      safetyCenterService
+      safetyCenterService,
+      tenantContextService,
+      aiChatbotService,
+      knowledgeService,
+      documentService,
+      aiRagRuntimeService,
+      aiOperationsService
     }),
     adminAuthService,
     auditService,
@@ -455,7 +832,13 @@ const createTestApp = (options: {
     handoffService,
     outboxService,
     chatbotService,
-    safetyCenterService
+    safetyCenterService,
+    tenantContextService,
+    aiChatbotService,
+    knowledgeService,
+    documentService,
+    aiRagRuntimeService,
+    aiOperationsService
   };
 };
 
@@ -621,11 +1004,6 @@ describe('Admin API authentication and safety boundary', () => {
         'admin_csrf=csrf-token'
       ])
       .set('X-CSRF-Token', 'csrf-token')
-      .send({
-        reason: 'Credential ditolak WhatsApp',
-        currentPassword: 'admin123',
-        confirmation: 'RESET_WHATSAPP_SESSION'
-      })
       .expect(403);
 
     expect(whatsappService.requestReconnect).not.toHaveBeenCalled();
@@ -669,7 +1047,7 @@ describe('Admin API authentication and safety boundary', () => {
     });
   });
 
-  it('resets rejected WhatsApp credentials with step-up authentication and audit', async () => {
+  it('resets WhatsApp credentials in one click with audit', async () => {
     const {
       app,
       adminAuthService,
@@ -683,65 +1061,33 @@ describe('Admin API authentication and safety boundary', () => {
         'admin_csrf=csrf-token'
       ])
       .set('X-CSRF-Token', 'csrf-token')
-      .send({
-        reason: 'Credential ditolak WhatsApp',
-        currentPassword: 'admin123',
-        confirmation: 'RESET_WHATSAPP_SESSION'
-      })
       .expect(202);
 
     expect(response.body.data.session.state).toBe('disconnected');
-    expect(adminAuthService.verifyUserPassword).toHaveBeenCalledWith(
-      admin.id,
-      'admin123'
-    );
+    expect(adminAuthService.verifyUserPassword).not.toHaveBeenCalled();
     expect(whatsappService.resetCredentials).toHaveBeenCalledOnce();
     expect(auditService.record).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'session.auth_reset' })
+      expect.objectContaining({
+        action: 'session.auth_reset_requested',
+        reason: 'Admin requested WhatsApp credential reset'
+      })
+    );
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'session.auth_reset',
+        reason: 'Admin requested WhatsApp credential reset'
+      })
     );
   });
 
-  it('rejects credential reset without exact confirmation or valid password', async () => {
-    const {
-      app,
-      adminAuthService,
-      whatsappService
-    } = createTestApp();
-    const endpoint = '/api/admin/v1/session/reset';
-    const requestWithCsrf = () =>
-      request(app)
-        .post(endpoint)
-        .set('Cookie', [
-          'admin_session=session-token',
-          'admin_csrf=csrf-token'
-        ])
-        .set('X-CSRF-Token', 'csrf-token');
+  it('still requires CSRF protection for one-click credential reset', async () => {
+    const { app, whatsappService } = createTestApp();
 
-    const badConfirmation = await requestWithCsrf()
-      .send({
-        reason: 'Credential ditolak WhatsApp',
-        currentPassword: 'admin123',
-        confirmation: 'reset'
-      })
-      .expect(400);
-    expect(badConfirmation.body.error.code).toBe(
-      'SESSION_RESET_CONFIRMATION_REQUIRED'
-    );
-
-    const badPassword = await requestWithCsrf()
-      .send({
-        reason: 'Credential ditolak WhatsApp',
-        currentPassword: 'wrong-password',
-        confirmation: 'RESET_WHATSAPP_SESSION'
-      })
+    await request(app)
+      .post('/api/admin/v1/session/reset')
+      .set('Cookie', 'admin_session=session-token')
       .expect(403);
-    expect(badPassword.body.error.code).toBe(
-      'STEP_UP_AUTHENTICATION_FAILED'
-    );
-    expect(adminAuthService.verifyUserPassword).toHaveBeenCalledWith(
-      admin.id,
-      'wrong-password'
-    );
+
     expect(whatsappService.resetCredentials).not.toHaveBeenCalled();
   });
 
@@ -1054,6 +1400,52 @@ describe('Admin API authentication and safety boundary', () => {
     );
   });
 
+  it('returns AI handoff detail and supports in-progress and close transitions', async () => {
+    const { app, handoffService, auditService } = createTestApp();
+    const detail = await request(app)
+      .get(`/api/admin/v1/handoffs/${openHandoff.id}`)
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    expect(detail.headers['cache-control']).toBe('no-store');
+    expect(detail.body.data).toMatchObject({
+      reason: 'customer_interested', summary: 'Customer meminta langkah berikutnya.',
+      safetyCategory: 'normal_faq', traceId: 'trace_sprint_5'
+    });
+
+    await request(app)
+      .post(`/api/admin/v1/handoffs/${openHandoff.id}/in-progress`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token').send({}).expect(200);
+    expect(handoffService.markInProgress).toHaveBeenCalledWith(openHandoff.id, admin.id);
+
+    await request(app)
+      .post(`/api/admin/v1/handoffs/${openHandoff.id}/close`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ resolutionNote: 'Tindak lanjut selesai.' }).expect(200);
+    expect(handoffService.close).toHaveBeenCalledWith(openHandoff.id, 'Tindak lanjut selesai.');
+    expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'handoff.close' }));
+  });
+
+  it('scopes the AI handoff alias to the server-derived tenant', async () => {
+    const { app, handoffService } = createTestApp();
+    await request(app)
+      .get('/api/admin/v1/ai-chatbot/handoffs?state=open')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    expect(handoffService.list).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: '00000000-0000-4000-8000-000000000001'
+    }));
+
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/handoffs/${openHandoff.id}/assign`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token').send({}).expect(200);
+    expect(handoffService.assign).toHaveBeenCalledWith(
+      openHandoff.id, admin.id, '00000000-0000-4000-8000-000000000001'
+    );
+  });
+
   it('accepts an idempotent control-panel message into the outbox', async () => {
     const { app, outboxService } = createTestApp();
     const response = await request(app)
@@ -1151,14 +1543,17 @@ describe('Admin API authentication and safety boundary', () => {
     );
   });
 
-  it('lets an Admin inspect versions and dry-run an exact normalized response', async () => {
+  it('lets an Admin read the active config and preview unsaved rules', async () => {
     const { app, chatbotService } = createTestApp();
-    const versions = await request(app)
-      .get('/api/admin/v1/chatbot/versions')
+    const config = await request(app)
+      .get('/api/admin/v1/chatbot/config')
       .set('Cookie', 'admin_session=session-token')
       .expect(200);
 
-    expect(versions.body.data[0].id).toBe(draftChatbotVersionId);
+    expect(config.body.data).toMatchObject({
+      revision: 3,
+      updatedAt: '2026-07-30T03:00:00.000Z'
+    });
 
     const preview = await request(app)
       .post('/api/admin/v1/chatbot/test')
@@ -1167,22 +1562,528 @@ describe('Admin API authentication and safety boundary', () => {
         'admin_csrf=csrf-token'
       ])
       .set('X-CSRF-Token', 'csrf-token')
-      .send({ versionId: draftChatbotVersionId, input: '  MENU  ' })
+      .send({ input: '  MENU  ', rules: candidateChatbotRules })
       .expect(200);
 
     expect(preview.body.data).toMatchObject({
-      versionId: draftChatbotVersionId,
       normalizedInput: 'menu',
       response: 'Fallback'
     });
-    expect(chatbotService.evaluate).toHaveBeenCalledWith(
+    expect(chatbotService.preview).toHaveBeenCalledWith(
       '  MENU  ',
-      draftChatbotVersionId
+      candidateChatbotRules
     );
   });
 
+  it('exposes the fail-closed AI chatbot foundation to an authorized Admin', async () => {
+    const { app } = createTestApp();
+    const response = await request(app)
+      .get('/api/admin/v1/ai-chatbot/foundation')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      data: {
+        phase: 'sprint_6',
+        status: 'development_ready',
+        runtime: {
+          enabled: false,
+          customerTraffic: 'disabled',
+          strictGrounding: true
+        },
+        guardrails: {
+          booking: false,
+          payments: false,
+          diagnosis: false
+        }
+      },
+      meta: {
+        requestId: expect.any(String),
+        generatedAt: expect.any(String)
+      }
+    });
+    expect(response.body.data.modules).toHaveLength(9);
+    expect(response.body.data.provider).not.toHaveProperty('secretReference');
+    expect(response.body.data.provider).not.toHaveProperty(
+      'providerSecretReference'
+    );
+  });
+
+  it('keeps the AI chatbot foundation behind the temporary manage permission', async () => {
+    const { app } = createTestApp({
+      authenticated: {
+        ...admin,
+        role: 'viewer',
+        permissions: ['dashboard.read']
+      }
+    });
+
+    const response = await request(app)
+      .get('/api/admin/v1/ai-chatbot/foundation')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(403);
+
+    expect(response.body.error).toMatchObject({
+      code: 'TENANT_PERMISSION_DENIED',
+      details: { permission: 'ai.settings.read' }
+    });
+  });
+
+  it('returns tenant-scoped redacted AI integration settings and readiness', async () => {
+    const { app, aiChatbotService } = createTestApp();
+    const response = await request(app)
+      .get('/api/admin/v1/ai-chatbot/integration')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+
+    expect(response.body.data).toMatchObject({
+      integration: {
+        tenantId: aiIntegration.tenantId,
+        secretReferenceConfigured: true,
+        effectiveEnabled: false
+      },
+      readiness: {
+        effectiveEnabled: false,
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: 'GLOBAL_RUNTIME_HARD_OFF' })
+        ])
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain('AI_CHATBOT_MOCK_KEY');
+    expect(aiChatbotService.getIntegration).toHaveBeenCalledWith(
+      aiIntegration.tenantId
+    );
+  });
+
+  it('requires CSRF before changing AI integration settings', async () => {
+    const { app, aiChatbotService } = createTestApp();
+    await request(app)
+      .put('/api/admin/v1/ai-chatbot/integration')
+      .set('Cookie', 'admin_session=session-token')
+      .send(aiIntegrationUpdateInput)
+      .expect(403);
+
+    expect(aiChatbotService.updateIntegration).not.toHaveBeenCalled();
+  });
+
+  it('ignores a client tenant override and keeps secret references out of audit state', async () => {
+    const { app, aiChatbotService, auditService } = createTestApp();
+    const response = await request(app)
+      .put('/api/admin/v1/ai-chatbot/integration')
+      .set('Cookie', [
+        'admin_session=session-token',
+        'admin_csrf=csrf-token'
+      ])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({
+        ...aiIntegrationUpdateInput,
+        tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      })
+      .expect(200);
+
+    expect(response.body.data.integration.revision).toBe(2);
+    expect(aiChatbotService.updateIntegration).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      expect.objectContaining({ expectedRevision: 1, provider: 'mock' })
+    );
+    expect(JSON.stringify(vi.mocked(auditService.record).mock.calls)).not.toContain(
+      'env://AI_CHATBOT_MOCK_KEY'
+    );
+  });
+
+  it('persists draft, approval, and publication through guarded prompt routes', async () => {
+    const { app, aiChatbotService } = createTestApp();
+    const authenticatedMutation = () =>
+      request(app)
+        .post('/api/admin/v1/ai-chatbot/prompts')
+        .set('Cookie', [
+          'admin_session=session-token',
+          'admin_csrf=csrf-token'
+        ])
+        .set('X-CSRF-Token', 'csrf-token');
+
+    await authenticatedMutation()
+      .send({
+        name: aiPrompt.name,
+        primaryLanguage: aiPrompt.primaryLanguage,
+        tone: aiPrompt.tone,
+        systemInstruction: aiPrompt.systemInstruction,
+        fallbackMessage: aiPrompt.fallbackMessage,
+        handoffMessage: aiPrompt.handoffMessage,
+        disclaimerText: null,
+        maxAnswerLength: aiPrompt.maxAnswerLength
+      })
+      .expect(201);
+
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/prompts/${aiPrompt.id}/approve`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ expectedVersion: 1, changeReason: 'Reviewed for Sprint 1' })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/prompts/${aiPrompt.id}/publish`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ expectedVersion: 1, changeReason: 'Approved for internal use' })
+      .expect(200);
+
+    expect(aiChatbotService.createPrompt).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      admin.id,
+      expect.objectContaining({ name: aiPrompt.name })
+    );
+    expect(aiChatbotService.approvePrompt).toHaveBeenCalledOnce();
+    expect(aiChatbotService.publishPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('returns explicit blockers when activation is attempted', async () => {
+    const { app } = createTestApp();
+    const response = await request(app)
+      .post('/api/admin/v1/ai-chatbot/integration/activate')
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({
+        expectedRevision: 1,
+        acknowledgement: 'ACTIVATE_STRICT_GROUNDED_AI'
+      })
+      .expect(409);
+
+    expect(response.body.error).toMatchObject({
+      code: 'AI_ACTIVATION_BLOCKED',
+      details: {
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: 'GLOBAL_RUNTIME_HARD_OFF' })
+        ])
+      }
+    });
+  });
+
+  it('lists Sprint 2 categories and knowledge inside the resolved tenant', async () => {
+    const { app, knowledgeService } = createTestApp();
+    const categories = await request(app)
+      .get('/api/admin/v1/ai-chatbot/categories')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    const knowledge = await request(app)
+      .get('/api/admin/v1/ai-chatbot/knowledge?status=draft&limit=20')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+
+    expect(categories.body.data[0].slug).toBe(knowledgeCategory.slug);
+    expect(knowledge.body.data[0].title).toBe(knowledgeItem.title);
+    expect(knowledgeService.listCategories).toHaveBeenCalledWith(aiIntegration.tenantId);
+    expect(knowledgeService.listKnowledge).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      expect.objectContaining({ status: 'draft', limit: 20 })
+    );
+  });
+
+  it('creates and submits knowledge without trusting a body tenant override', async () => {
+    const { app, knowledgeService, auditService } = createTestApp();
+    await request(app)
+      .post('/api/admin/v1/ai-chatbot/knowledge')
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({
+        ...knowledgeWriteInput,
+        tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      })
+      .expect(201);
+
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/knowledge/${knowledgeItem.id}/submit-review`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ expectedVersion: 1, expectedRevision: 1, reason: 'Ready for review' })
+      .expect(200);
+
+    expect(knowledgeService.createKnowledge).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      admin.id,
+      expect.objectContaining({ title: knowledgeItem.title })
+    );
+    expect(knowledgeService.transitionKnowledge).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      knowledgeItem.id,
+      admin.id,
+      1,
+      1,
+      'submit_review',
+      'Ready for review'
+    );
+    expect(JSON.stringify(vi.mocked(auditService.record).mock.calls)).not.toContain(
+      knowledgeItem.content
+    );
+  });
+
+  it('requires CSRF and granular publish permission for knowledge mutations', async () => {
+    const readOnlyAdmin = {
+      ...admin,
+      permissions: ['dashboard.read', 'messages.read'] as AuthenticatedAdmin['permissions']
+    };
+    const tenantContextService = {
+      resolveForAdmin: vi.fn(async () => ({
+        tenantId: aiIntegration.tenantId,
+        slug: 'raho',
+        name: 'RAHO',
+        permissions: ['knowledge.read']
+      }))
+    } as unknown as TenantContextService;
+    const { app, knowledgeService } = createTestApp({
+      authenticated: readOnlyAdmin,
+      tenantContextService
+    });
+
+    await request(app)
+      .post('/api/admin/v1/ai-chatbot/knowledge')
+      .set('Cookie', 'admin_session=session-token')
+      .send(knowledgeWriteInput)
+      .expect(403);
+
+    const response = await request(app)
+      .post(`/api/admin/v1/ai-chatbot/knowledge/${knowledgeItem.id}/publish`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ expectedVersion: 1, expectedRevision: 1, reason: 'Approved release' })
+      .expect(403);
+
+    expect(response.body.error).toMatchObject({
+      code: 'TENANT_PERMISSION_DENIED',
+      details: { permission: 'knowledge.publish' }
+    });
+    expect(knowledgeService.createKnowledge).not.toHaveBeenCalled();
+    expect(knowledgeService.transitionKnowledge).not.toHaveBeenCalled();
+  });
+
+  it('uploads and queues a Sprint 3 document inside the server-derived tenant', async () => {
+    const { app, documentService, auditService } = createTestApp();
+    const mutation = request(app)
+      .post('/api/admin/v1/ai-chatbot/documents/upload')
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .field('categoryId', knowledgeCategory.id)
+      .field('tenantId', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+      .attach('file', Buffer.from('Informasi resmi RAHO untuk pelanggan.'), {
+        filename: 'panduan.txt', contentType: 'text/plain'
+      });
+    const uploaded = await mutation.expect(201);
+
+    expect(uploaded.body.data.id).toBe(knowledgeDocument.id);
+    expect(documentService.upload).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      admin.id,
+      knowledgeCategory.id,
+      expect.objectContaining({ originalname: 'panduan.txt' })
+    );
+    expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'ai.document_uploaded',
+      afterState: expect.not.objectContaining({ objectKey: expect.anything() })
+    }));
+
+    const queued = await request(app)
+      .post(`/api/admin/v1/ai-chatbot/documents/${knowledgeDocument.id}/process`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .expect(202);
+    expect(queued.body.data.status).toBe('queued');
+    expect(documentService.enqueueDocument).toHaveBeenCalledWith(
+      aiIntegration.tenantId,
+      knowledgeDocument.id,
+      expect.any(String),
+      false
+    );
+  });
+
+  it('lists document processing state and returns a no-store extraction preview', async () => {
+    const { app, documentService } = createTestApp();
+    const listed = await request(app)
+      .get('/api/admin/v1/ai-chatbot/documents?status=uploaded')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    expect(listed.body.data[0].filename).toBe('panduan.txt');
+    expect(documentService.list).toHaveBeenCalledWith(aiIntegration.tenantId, {
+      limit: 20, offset: 0, status: 'uploaded'
+    });
+
+    const preview = await request(app)
+      .get(`/api/admin/v1/ai-chatbot/documents/${knowledgeDocument.id}/preview`)
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    expect(preview.headers['cache-control']).toBe('no-store');
+    expect(preview.body.data.extractionPreview).toContain('Informasi resmi');
+  });
+
+  it('requires CSRF and knowledge.edit for document upload and processing', async () => {
+    const readOnlyAdmin = {
+      ...admin,
+      permissions: ['dashboard.read', 'messages.read'] as AuthenticatedAdmin['permissions']
+    };
+    const tenantContextService = {
+      resolveForAdmin: vi.fn(async () => ({
+        tenantId: aiIntegration.tenantId,
+        slug: 'raho',
+        name: 'RAHO',
+        permissions: ['knowledge.read']
+      }))
+    } as unknown as TenantContextService;
+    const { app, documentService } = createTestApp({
+      authenticated: readOnlyAdmin,
+      tenantContextService
+    });
+
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/documents/${knowledgeDocument.id}/process`)
+      .set('Cookie', 'admin_session=session-token')
+      .expect(403);
+
+    const denied = await request(app)
+      .post(`/api/admin/v1/ai-chatbot/documents/${knowledgeDocument.id}/process`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .expect(403);
+    expect(denied.body.error).toMatchObject({
+      code: 'TENANT_PERMISSION_DENIED',
+      details: { permission: 'knowledge.edit' }
+    });
+    expect(documentService.enqueueDocument).not.toHaveBeenCalled();
+  });
+
+  it('runs the Sprint 4 Alpha Playground with server tenant and redacted audit metadata', async () => {
+    const { app, aiRagRuntimeService, auditService } = createTestApp();
+    const response = await request(app)
+      .post('/api/admin/v1/ai-chatbot/playground/test')
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ message: 'Apa itu RAHO?', tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' })
+      .expect(200);
+
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.data).toMatchObject({
+      answerStatus: 'supported',
+      traceId: 'af924761-829f-41b3-ac80-01163852cb76'
+    });
+    expect(aiRagRuntimeService.respond).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: aiIntegration.tenantId,
+      channel: 'playground',
+      requireActiveIntegration: false
+    }));
+    expect(JSON.stringify(vi.mocked(auditService.record).mock.calls)).not.toContain('Apa itu RAHO?');
+    expect(JSON.stringify(vi.mocked(auditService.record).mock.calls)).not.toContain('Jawaban grounded');
+  });
+
+  it('exposes tenant-scoped Sprint 6 logs and saves audited reviewer feedback', async () => {
+    const { app, aiOperationsService, auditService } = createTestApp();
+    const logs = await request(app)
+      .get('/api/admin/v1/ai-chatbot/conversations?unanswered=true')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(200);
+    expect(logs.headers['cache-control']).toBe('no-store');
+    expect(logs.body.data[0]).toMatchObject({ channel: 'playground', traceCount: 1 });
+    expect(aiOperationsService.listConversations).toHaveBeenCalledWith(
+      aiIntegration.tenantId, expect.objectContaining({ unanswered: true })
+    );
+
+    const traceId = 'af924761-829f-41b3-ac80-01163852cb76';
+    await request(app)
+      .post(`/api/admin/v1/ai-chatbot/messages/${traceId}/feedback`)
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ type: 'correct', comment: 'Grounded.', correctKnowledgeIds: [] })
+      .expect(200);
+    expect(aiOperationsService.saveFeedback).toHaveBeenCalledWith(
+      aiIntegration.tenantId, traceId, admin.id, expect.objectContaining({ type: 'correct' })
+    );
+    expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'ai.message_feedback_saved' }));
+  });
+
+  it('rejects invalid Sprint 6 conversation status and date filters before querying storage', async () => {
+    const { app, aiOperationsService } = createTestApp();
+    await request(app)
+      .get('/api/admin/v1/ai-chatbot/conversations?answerStatus=made_up')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(400);
+    await request(app)
+      .get('/api/admin/v1/ai-chatbot/conversations?from=not-a-date')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(400);
+    expect(aiOperationsService.listConversations).not.toHaveBeenCalled();
+  });
+
+  it('runs a Sprint 6 test-case batch behind evaluation permission and CSRF', async () => {
+    const { app, aiOperationsService } = createTestApp();
+    const response = await request(app)
+      .post('/api/admin/v1/ai-chatbot/playground/test-cases/run-batch')
+      .set('Cookie', ['admin_session=session-token', 'admin_csrf=csrf-token'])
+      .set('X-CSRF-Token', 'csrf-token')
+      .send({ testCaseIds: ['ea9f426f-17bd-47f7-a260-6017017fdd46'] })
+      .expect(200);
+    expect(response.body.data).toMatchObject({ total: 1, passed: 1, failed: 0, passRate: 1 });
+    expect(aiOperationsService.runBatch).toHaveBeenCalledWith(
+      aiIntegration.tenantId, admin.id, ['ea9f426f-17bd-47f7-a260-6017017fdd46']
+    );
+  });
+
+  it('guards the service runtime with API key, alpha flag, and idempotency key', async () => {
+    const previous = env.AI_CHATBOT_ALPHA_RUNTIME_ENABLED;
+    env.AI_CHATBOT_ALPHA_RUNTIME_ENABLED = true;
+    try {
+      const { app, aiRagRuntimeService } = createTestApp();
+      const payload = {
+        channel: 'whatsapp', channelSessionId: 'wa-main',
+        customerIdentifier: '628123456789@s.whatsapp.net',
+        providerMessageId: 'provider-sprint-4', message: 'Apa itu RAHO?',
+        timestamp: '2026-08-05T02:00:00.000Z'
+      };
+      await request(app)
+        .post('/api/admin/v1/ai-chatbot/runtime/respond')
+        .set('Idempotency-Key', payload.providerMessageId)
+        .send(payload)
+        .expect(401);
+      await request(app)
+        .post('/api/admin/v1/ai-chatbot/runtime/respond')
+        .set('X-API-Key', env.API_KEY)
+        .set('Idempotency-Key', 'different')
+        .send(payload)
+        .expect(409);
+      await request(app)
+        .post('/api/admin/v1/ai-chatbot/runtime/respond')
+        .set('X-API-Key', env.API_KEY)
+        .set('Idempotency-Key', payload.providerMessageId)
+        .send(payload)
+        .expect(200);
+      expect(aiRagRuntimeService.respond).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: env.AI_CHATBOT_DEFAULT_TENANT_ID,
+        channel: 'whatsapp',
+        requireActiveIntegration: true
+      }));
+    } finally {
+      env.AI_CHATBOT_ALPHA_RUNTIME_ENABLED = previous;
+    }
+  });
+
+  it('rejects AI routes when server-side tenant membership cannot be resolved', async () => {
+    const tenantContextService = {
+      resolveForAdmin: vi.fn(async () => {
+        throw new TenantContextResolutionError(
+          'No active membership',
+          'TENANT_CONTEXT_UNRESOLVED'
+        );
+      })
+    } as unknown as TenantContextService;
+    const { app } = createTestApp({ tenantContextService });
+
+    const response = await request(app)
+      .get('/api/admin/v1/ai-chatbot/integration')
+      .set('Cookie', 'admin_session=session-token')
+      .expect(403);
+
+    expect(response.body.error.code).toBe('TENANT_CONTEXT_UNRESOLVED');
+  });
+
   it.each(['viewer', 'operator'] as const)(
-    'prevents a %s from creating a chatbot draft',
+    'prevents a %s from updating the chatbot config',
     async (role) => {
       const { app, chatbotService } = createTestApp({
         authenticated: {
@@ -1193,66 +2094,76 @@ describe('Admin API authentication and safety boundary', () => {
       });
 
       const response = await request(app)
-        .post('/api/admin/v1/chatbot/versions/drafts')
+        .put('/api/admin/v1/chatbot/config')
         .set('Cookie', [
           'admin_session=session-token',
           'admin_csrf=csrf-token'
         ])
         .set('X-CSRF-Token', 'csrf-token')
-        .send({ name: 'Unauthorized draft' })
+        .send({ expectedRevision: 3, rules: candidateChatbotRules })
         .expect(403);
 
       expect(response.body.error).toMatchObject({
         code: 'PERMISSION_DENIED',
         details: { permission: 'chatbot.manage' }
       });
-      expect(chatbotService.createDraft).not.toHaveBeenCalled();
+      expect(chatbotService.updateConfig).not.toHaveBeenCalled();
     }
   );
 
-  it('requires publish confirmation and audits a confirmed publish', async () => {
+  it('atomically updates and audits the active chatbot config', async () => {
     const { app, chatbotService, auditService } = createTestApp();
-    const endpoint = `/api/admin/v1/chatbot/versions/${draftChatbotVersionId}/publish`;
-    const agent = () =>
-      request(app)
-        .post(endpoint)
-        .set('Cookie', [
-          'admin_session=session-token',
-          'admin_csrf=csrf-token'
-        ])
-        .set('X-CSRF-Token', 'csrf-token');
-
-    const rejected = await agent()
+    const response = await request(app)
+      .put('/api/admin/v1/chatbot/config')
+      .set('Cookie', [
+        'admin_session=session-token',
+        'admin_csrf=csrf-token'
+      ])
+      .set('X-CSRF-Token', 'csrf-token')
       .send({
-        expectedActiveVersionId: activeChatbotVersionId,
-        changeSummary: 'Align menu locations and reservations',
-        confirmation: 'publish'
-      })
-      .expect(400);
-    expect(rejected.body.error.code).toBe(
-      'CHATBOT_PUBLISH_CONFIRMATION_REQUIRED'
-    );
-    expect(chatbotService.publish).not.toHaveBeenCalled();
-
-    await agent()
-      .send({
-        expectedActiveVersionId: activeChatbotVersionId,
-        changeSummary: 'Align menu locations and reservations',
-        confirmation: 'PUBLISH'
+        expectedRevision: 3,
+        rules: candidateChatbotRules
       })
       .expect(200);
 
-    expect(chatbotService.publish).toHaveBeenCalledWith({
-      versionId: draftChatbotVersionId,
-      actorUserId: admin.id,
-      expectedActiveVersionId: activeChatbotVersionId,
-      changeSummary: 'Align menu locations and reservations'
+    expect(response.body.data.revision).toBe(4);
+    expect(chatbotService.updateConfig).toHaveBeenCalledWith({
+      expectedRevision: 3,
+      rules: candidateChatbotRules
     });
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(auditService.record).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        action: 'chatbot.version_published',
-        reason: 'Align menu locations and reservations'
+        action: 'chatbot.config_update_requested',
+        resourceType: 'chatbot_config',
+        beforeState: {
+          expectedRevision: 3,
+          ruleCount: candidateChatbotRules.length
+        }
       })
     );
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'chatbot.config_updated',
+        resourceType: 'chatbot_config',
+        resourceId: activeChatbotVersionId,
+        beforeState: expect.objectContaining({ revision: 3 }),
+        afterState: expect.objectContaining({ revision: 4 })
+      })
+    );
+  });
+
+  it('removes the draft, publish, history, and rollback routes', async () => {
+    const { app } = createTestApp();
+    const cookie = 'admin_session=session-token';
+
+    await request(app)
+      .get('/api/admin/v1/chatbot/versions')
+      .set('Cookie', cookie)
+      .expect(404);
+    await request(app)
+      .post(`/api/admin/v1/chatbot/versions/${activeChatbotVersionId}/rollback`)
+      .set('Cookie', cookie)
+      .expect(404);
   });
 });

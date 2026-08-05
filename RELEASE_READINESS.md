@@ -10,7 +10,7 @@ Status: **siap dideploy dengan satu batasan upstream yang diketahui**.
 - Audit dependency production: 0 vulnerability pada ketiga package.
 - Kedua image Docker berhasil dibangun.
 - Smoke stack PostgreSQL + backend + Nginx/React berhasil sehat.
-- Migration dan bootstrap admin berhasil pada database kosong.
+- Migration dan bootstrap akun admin berhasil pada database kosong.
 - `/healthz`, SPA root, SPA deep-link, reverse proxy API, login, cookie
   `Secure`, session auth, dan cross-origin rejection sudah diverifikasi.
 - Backend image berjalan sebagai user `node`; database tidak dipublish ke host;

@@ -139,12 +139,16 @@ Admin facade melakukan normalisasi `progress / 100` dan mengunci rentang `0–1`
 
 **Status:** Accepted
 
-Action berikut membutuhkan audit dan alasan:
+Action berikut membutuhkan audit. Alasan operator diwajibkan untuk tindakan
+operasional yang memerlukan konteks manual. Credential reset/re-pair memakai
+alasan server-side karena merupakan one-click action; perubahan konfigurasi
+chatbot memakai revision, rule count, dan content hash sebagai konteks audit
+tanpa field alasan tambahan di editor:
 
 - resume pada risk tinggi/critical;
 - reset atau re-pair session;
 - retry message sebagai logical message baru;
-- publish/rollback chatbot rule;
+- perubahan konfigurasi chatbot aktif;
 - perubahan role/permission.
 
 Action reset tidak boleh diberi label “Reset all” karena `AntiBan.reset()` saat ini tidak mereset seluruh rate limiter, delivery tracker, dan recovery state.

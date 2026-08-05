@@ -6,7 +6,7 @@ Pengguna terautentikasi dapat membuka shell dan melihat health secara aman.
 
 ## Selesai
 
-- [x] Local bootstrap admin untuk development.
+- [x] Dua akun bootstrap admin lokal untuk development.
 - [x] Password salted scrypt hash.
 - [x] Opaque PostgreSQL session dengan expiry dan revoke.
 - [x] `HttpOnly`, `SameSite=Lax` session cookie; `Secure` pada production.
@@ -33,10 +33,14 @@ Default hanya berlaku bila `NODE_ENV` bukan `production`:
 ```text
 username: admin
 password: admin123
+
+username: superadmin
+password: superadmin123
 ```
 
-Set `ADMIN_BOOTSTRAP_PASSWORD` ke password kuat. Pada production variable ini wajib.
-Mengubah variable tidak merotasi password user yang sudah dibuat di database.
+Set `ADMIN_BOOTSTRAP_PASSWORD` dan `SUPERADMIN_BOOTSTRAP_PASSWORD` ke password kuat
+yang berbeda. Pada production kedua variable ini wajib. Mengubah variable tidak
+merotasi password user yang sudah dibuat di database.
 
 ## Validasi
 

@@ -1,4 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode
+} from 'react';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import type { AdminUser, ConnectionState, Risk } from '../api/contracts';
 import { navigate } from '../routing/navigation';
@@ -27,6 +33,20 @@ const sessionTone: Record<AppShellProps['sessionState'], StatusTone> = {
   shutting_down: 'neutral'
 };
 
+const compactSessionLabel: Record<AppShellProps['sessionState'], string> = {
+  loading: 'Memuat',
+  starting: 'Memulai',
+  connecting: 'Menghubungkan',
+  qr_required: 'Perlu QR',
+  connected: 'Terhubung',
+  reconnecting: 'Menghubungkan',
+  paused: 'Dijeda',
+  logged_out: 'Keluar',
+  bad_session: 'Sesi rusak',
+  disconnected: 'Terputus',
+  shutting_down: 'Berhenti'
+};
+
 const riskTone: Record<AppShellProps['risk'], StatusTone> = {
   unknown: 'neutral',
   low: 'success',
@@ -35,41 +55,72 @@ const riskTone: Record<AppShellProps['risk'], StatusTone> = {
   critical: 'danger'
 };
 
+const riskLabel: Record<AppShellProps['risk'], string> = {
+  unknown: 'Belum diketahui',
+  low: 'Rendah',
+  medium: 'Sedang',
+  high: 'Tinggi',
+  critical: 'Kritis'
+};
+
 type NavigationItem = {
   label: string;
-  path?: string;
-  activePrefix?: string;
-  enabled: boolean;
+  path: string;
+  activeWhen?: (currentPath: string) => boolean;
   permission?: AdminUser['permissions'][number];
 };
 
-const navigation: NavigationItem[] = [
-  { label: 'Overview', path: '/overview', enabled: true },
-  { label: 'Inbox', path: '/inbox', enabled: true },
-  { label: 'Contacts', path: '/contacts', enabled: true },
+type NavigationGroup = {
+  id: string;
+  label: string;
+  items: NavigationItem[];
+};
+
+const navigationGroups: NavigationGroup[] = [
   {
-    label: 'Messages',
-    path: '/messages/outbox',
-    activePrefix: '/messages',
-    enabled: true
+    id: 'main',
+    label: 'Utama',
+    items: [
+      { label: 'Beranda', path: '/overview' },
+      { label: 'Inbox', path: '/inbox' },
+      { label: 'Kontak', path: '/contacts' },
+      {
+        label: 'Chatbot',
+        path: '/chatbot/rules',
+        permission: 'chatbot.manage'
+      },
+      {
+        label: 'Integrasi Chatbot AI',
+        path: '/ai-chatbot/overview',
+        activeWhen: (currentPath) =>
+          currentPath === '/ai-chatbot' ||
+          currentPath.startsWith('/ai-chatbot/'),
+        permission: 'chatbot.manage'
+      }
+    ]
   },
   {
-    label: 'Session',
-    path: '/operations/session',
-    enabled: true
+    id: 'delivery',
+    label: 'Pengiriman',
+    items: [
+      { label: 'Tulis pesan', path: '/messages/compose' },
+      {
+        label: 'Riwayat pengiriman',
+        path: '/messages/outbox',
+        activeWhen: (currentPath) =>
+          currentPath === '/messages/outbox' ||
+          /^\/messages\/[0-9a-f-]{36}$/i.test(currentPath)
+      }
+    ]
   },
   {
-    label: 'Safety',
-    path: '/operations/safety',
-    enabled: true
-  },
-  {
-    label: 'Chatbot',
-    path: '/chatbot/rules',
-    enabled: true,
-    permission: 'chatbot.manage'
-  },
-  { label: 'Settings', enabled: false }
+    id: 'connection',
+    label: 'Koneksi',
+    items: [
+      { label: 'Sesi WhatsApp', path: '/operations/session' },
+      { label: 'Keamanan', path: '/operations/safety' }
+    ]
+  }
 ];
 
 const initials = (displayName: string) =>
@@ -80,6 +131,33 @@ const initials = (displayName: string) =>
     .join('')
     .toUpperCase();
 
+const isNavigationItemActive = (item: NavigationItem, currentPath: string) =>
+  item.activeWhen?.(currentPath) ??
+  (item.path === currentPath ||
+  (item.path !== '/overview' && currentPath.startsWith(`${item.path}/`)));
+
+const shouldHandleNavigation = (event: ReactMouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 &&
+  !event.altKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey;
+
+const MenuIcon = ({ open }: { open: boolean }) => (
+  <svg
+    aria-hidden="true"
+    className="mobile-nav-toggle__icon"
+    focusable="false"
+    viewBox="0 0 24 24"
+  >
+    {open ? (
+      <path d="M5 5 19 19M19 5 5 19" />
+    ) : (
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    )}
+  </svg>
+);
+
 export const AppShell = ({
   children,
   sessionState,
@@ -89,48 +167,193 @@ export const AppShell = ({
   onLogout,
   currentPath
 }: AppShellProps) => {
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const mobileNavigationRef = useRef<HTMLElement>(null);
+  const mobileNavigationTriggerRef = useRef<HTMLButtonElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const visibleNavigationGroups = navigationGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => !item.permission || user.permissions.includes(item.permission)
+      )
+    }))
+    .filter((group) => group.items.length > 0);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !userMenuRef.current?.contains(event.target)
+      ) {
+        setUserMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setUserMenuOpen(false);
+      userMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [userMenuOpen]);
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+
+    mobileNavigationRef.current
+      ?.querySelector<HTMLAnchorElement>('.nav-item')
+      ?.focus();
+
+    const handleKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMobileNavigationOpen(false);
+        mobileNavigationTriggerRef.current?.focus();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const links = Array.from(
+        mobileNavigationRef.current?.querySelectorAll<HTMLAnchorElement>(
+          '.nav-item'
+        ) ?? []
+      );
+      const first = links[0];
+      const last = links.at(-1);
+      if (!first || !last) return;
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyboard);
+    return () => document.removeEventListener('keydown', handleKeyboard);
+  }, [mobileNavigationOpen]);
+
+  const handleNavigation = (
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    path: string
+  ) => {
+    if (!shouldHandleNavigation(event)) return;
+    event.preventDefault();
+    setMobileNavigationOpen(false);
+    navigate(path);
+  };
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Lewati ke konten utama
+      </a>
+
       <header className="topbar">
-        <a className="brand" href="/overview" aria-label="WhatsApp Control Panel">
+        <a
+          aria-label="Control Room — Overview"
+          className="brand"
+          href="/overview"
+          onClick={(event) => handleNavigation(event, '/overview')}
+        >
           <span className="brand__mark" aria-hidden="true">
-            W
+            <img
+              alt=""
+              className="brand__logo"
+              height="32"
+              src="/whatsapp.svg"
+              width="32"
+            />
           </span>
           <span>
             <strong>Control Room</strong>
-            <small>WhatsApp Operations</small>
+            <small>Operasional WhatsApp</small>
           </span>
         </a>
+
         <div className="topbar__status" aria-label="Status operasional">
           <StatusBadge tone="info">
-            {import.meta.env.PROD ? 'Production' : 'Development'}
+            {import.meta.env.PROD ? 'Produksi' : 'Development'}
           </StatusBadge>
           <StatusBadge tone={sessionTone[sessionState]}>
-            Session: {sessionState.replaceAll('_', ' ')}
+            Sesi: {compactSessionLabel[sessionState]}
           </StatusBadge>
-          <StatusBadge tone={riskTone[risk]}>Risk: {risk}</StatusBadge>
+          <StatusBadge tone={riskTone[risk]}>Risiko: {riskLabel[risk]}</StatusBadge>
         </div>
-        <div className="user-menu">
+
+        <div
+          aria-label={`Status sesi WhatsApp: ${compactSessionLabel[sessionState]}`}
+          aria-live="polite"
+          className="topbar__session-compact"
+          role="status"
+        >
+          <StatusBadge tone={sessionTone[sessionState]}>
+            {compactSessionLabel[sessionState]}
+          </StatusBadge>
+        </div>
+
+        <button
+          aria-controls="primary-navigation"
+          aria-expanded={mobileNavigationOpen}
+          className="mobile-nav-toggle"
+          onClick={() => {
+            setUserMenuOpen(false);
+            setMobileNavigationOpen((open) => !open);
+          }}
+          ref={mobileNavigationTriggerRef}
+          type="button"
+        >
+          <span className="sr-only">
+            {mobileNavigationOpen
+              ? 'Tutup navigasi utama'
+              : 'Buka navigasi utama'}
+          </span>
+          <MenuIcon open={mobileNavigationOpen} />
+        </button>
+
+        <div className="user-menu" ref={userMenuRef}>
           <button
+            aria-controls="user-disclosure"
             aria-expanded={userMenuOpen}
-            aria-haspopup="menu"
             className="avatar-button"
-            onClick={() => setUserMenuOpen((open) => !open)}
+            onClick={() => {
+              setMobileNavigationOpen(false);
+              setUserMenuOpen((open) => !open);
+            }}
+            ref={userMenuTriggerRef}
             type="button"
           >
-            <span className="sr-only">Buka menu pengguna</span>
-            {initials(user.displayName)}
+            <span className="sr-only">
+              {userMenuOpen ? 'Tutup menu pengguna' : 'Buka menu pengguna'}
+            </span>
+            <span aria-hidden="true">{initials(user.displayName)}</span>
           </button>
           {userMenuOpen && (
-            <div className="user-menu__panel" role="menu">
+            <div className="user-menu__panel" id="user-disclosure">
               <strong>{user.displayName}</strong>
-              <span>@{user.username} · {user.role}</span>
+              <span>
+                @{user.username} · {user.role}
+              </span>
               <button
                 disabled={loggingOut}
-                onClick={onLogout}
-                role="menuitem"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  onLogout();
+                }}
                 type="button"
               >
                 {loggingOut ? 'Keluar…' : 'Keluar'}
@@ -140,40 +363,53 @@ export const AppShell = ({
         </div>
       </header>
 
-      <aside className="sidebar" aria-label="Navigasi utama">
-        <nav>
-          <ul>
-            {navigation.map((item) => {
-              const isEnabled =
-                item.enabled &&
-                (!('permission' in item) ||
-                  !item.permission ||
-                  user.permissions.includes(item.permission));
-              return (
-              <li key={item.label}>
-                <button
-                  className="nav-item"
-                  data-active={
-                    item.path === currentPath ||
-                    Boolean(
-                      'activePrefix' in item &&
-                        item.activePrefix &&
-                        currentPath.startsWith(item.activePrefix)
-                    ) ||
-                    (item.path !== '/overview' &&
-                      Boolean(item.path && currentPath.startsWith(`${item.path}/`)))
-                  }
-                  disabled={!isEnabled}
-                  onClick={() => item.path && navigate(item.path)}
-                  type="button"
-                >
-                  {item.label}
-                  {!isEnabled && <span>restricted</span>}
-                </button>
-              </li>
-              );
-            })}
-          </ul>
+      {mobileNavigationOpen && (
+        <button
+          aria-label="Tutup navigasi utama"
+          className="mobile-nav-backdrop"
+          onClick={() => {
+            setMobileNavigationOpen(false);
+            mobileNavigationTriggerRef.current?.focus();
+          }}
+          type="button"
+        />
+      )}
+
+      <aside
+        aria-label="Navigasi utama"
+        aria-modal={mobileNavigationOpen ? true : undefined}
+        className="sidebar"
+        data-mobile-open={mobileNavigationOpen}
+        id="primary-navigation"
+        ref={mobileNavigationRef}
+        role={mobileNavigationOpen ? 'dialog' : undefined}
+      >
+        <nav aria-label="Navigasi utama">
+          {visibleNavigationGroups.map((group) => (
+            <div className="sidebar__group" key={group.id}>
+              <p className="sidebar__group-label">{group.label}</p>
+              <ul aria-label={group.label}>
+                {group.items.map((item) => {
+                  const active = isNavigationItemActive(item, currentPath);
+                  return (
+                    <li key={item.path}>
+                      <a
+                        aria-current={active ? 'page' : undefined}
+                        className="nav-item"
+                        data-active={active}
+                        href={item.path}
+                        onClick={(event) =>
+                          handleNavigation(event, item.path)
+                        }
+                      >
+                        {item.label}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </nav>
         <div className="sidebar__footer">
           <span className="pulse" aria-hidden="true" />
@@ -181,7 +417,15 @@ export const AppShell = ({
         </div>
       </aside>
 
-      <main className="main-content">{children}</main>
+      <main
+        aria-hidden={mobileNavigationOpen || undefined}
+        className="main-content"
+        id="main-content"
+        inert={mobileNavigationOpen}
+        tabIndex={-1}
+      >
+        {children}
+      </main>
     </div>
   );
 };

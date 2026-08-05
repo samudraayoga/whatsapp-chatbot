@@ -13,13 +13,31 @@ type OutboxPageProps = { user: AdminUser };
 
 const tabs: Array<{ label: string; state: OutboxState | 'all' }> = [
   { label: 'Semua', state: 'all' },
-  { label: 'Queued', state: 'queued' },
-  { label: 'Scheduled', state: 'scheduled' },
-  { label: 'Retry', state: 'retrying' },
-  { label: 'Failed', state: 'failed' },
-  { label: 'Unknown', state: 'unknown_outcome' },
-  { label: 'Completed', state: 'completed' }
+  { label: 'Antrean', state: 'queued' },
+  { label: 'Terjadwal', state: 'scheduled' },
+  { label: 'Coba ulang', state: 'retrying' },
+  { label: 'Gagal', state: 'failed' },
+  { label: 'Perlu dicek', state: 'unknown_outcome' },
+  { label: 'Selesai', state: 'completed' }
 ];
+
+const stateLabels: Record<OutboxState, string> = {
+  queued: 'Dalam antrean',
+  scheduled: 'Terjadwal',
+  leased: 'Sedang diproses',
+  retrying: 'Mencoba ulang',
+  safety_delayed: 'Ditunda sistem keamanan',
+  failed: 'Gagal',
+  completed: 'Selesai',
+  canceled: 'Dibatalkan',
+  unknown_outcome: 'Perlu diperiksa'
+};
+
+const priorityLabels = {
+  high: 'Tinggi',
+  normal: 'Normal',
+  low: 'Rendah'
+} as const;
 
 const toneFor = (state: OutboxState): StatusTone => {
   if (state === 'completed') return 'success';
@@ -57,23 +75,22 @@ export const OutboxPage = ({ user }: OutboxPageProps) => {
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 4 · Durable delivery</p>
-          <h1>Message outbox</h1>
-          <p>Accepted bukan berarti sent. Pantau worker, attempt, dan outcome dari sini.</p>
+          <p className="eyebrow">Pengiriman pesan</p>
+          <h1>Antrean pesan</h1>
+          <p>Pantau pesan yang menunggu, dijadwalkan, gagal, atau sudah selesai.</p>
         </div>
         <button className="button button--primary" type="button" onClick={() => navigate('/messages/compose')}>
-          Compose message
+          Tulis pesan
         </button>
       </header>
 
-      <div className="outbox-tabs" role="tablist" aria-label="Filter outbox">
+      <div className="outbox-tabs" role="group" aria-label="Filter status antrean pesan">
         {tabs.map((tab) => (
           <button
-            aria-selected={state === tab.state}
+            aria-pressed={state === tab.state}
             data-active={state === tab.state}
             key={tab.state}
             onClick={() => setState(tab.state)}
-            role="tab"
             type="button"
           >
             {tab.label}
@@ -83,48 +100,52 @@ export const OutboxPage = ({ user }: OutboxPageProps) => {
 
       {(cancel.isError || retry.isError) && (
         <p className="form-alert form-alert--error" role="alert">
-          Transisi outbox ditolak. Item mungkin sudah berubah state.
+          Status pesan gagal diperbarui. Data mungkin sudah berubah; muat ulang lalu
+          coba lagi.
         </p>
       )}
 
       {query.isPending ? (
-        <p className="empty-copy">Memuat outbox…</p>
+        <p className="empty-copy">Memuat antrean pesan…</p>
       ) : query.isError ? (
-        <p className="form-alert form-alert--error">Outbox gagal dimuat.</p>
+        <p className="form-alert form-alert--error">Antrean pesan gagal dimuat.</p>
       ) : items.length === 0 ? (
-        <div className="empty-stage"><p>Tidak ada item pada tab ini.</p></div>
+        <div className="empty-stage"><p>Tidak ada pesan dengan status ini.</p></div>
       ) : (
         <div className="outbox-table-wrap">
           <table className="outbox-table">
+            <caption className="sr-only">Daftar pesan dalam antrean pengiriman</caption>
             <thead>
               <tr>
-                <th>Contact / message</th>
-                <th>State</th>
-                <th>Priority</th>
-                <th>Attempt</th>
-                <th>Next attempt</th>
-                <th>Actions</th>
+                <th>Kontak / pesan</th>
+                <th>Status</th>
+                <th>Prioritas</th>
+                <th>Percobaan</th>
+                <th>Percobaan berikutnya</th>
+                <th>Aksi</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <strong>{item.contact.displayName ?? 'Contact tanpa nama'}</strong>
+                <tr data-state={item.state} key={item.id}>
+                  <td data-label="Kontak / pesan">
+                    <strong>{item.contact.displayName ?? 'Kontak tanpa nama'}</strong>
                     <span>{item.contact.maskedPhone ?? 'Nomor tidak tersedia'}</span>
                     <small>{item.preview}</small>
                   </td>
-                  <td>
-                    <StatusBadge tone={toneFor(item.state)}>{item.state}</StatusBadge>
+                  <td data-label="Status">
+                    <StatusBadge tone={toneFor(item.state)}>
+                      {stateLabels[item.state]}
+                    </StatusBadge>
                     {item.lastErrorCode && <small>{item.lastErrorCode}</small>}
                   </td>
-                  <td>{item.priority}</td>
-                  <td>{item.attempts}/{item.maxAttempts}</td>
-                  <td>{formatDate(item.nextAttemptAt)}</td>
-                  <td>
+                  <td data-label="Prioritas">{priorityLabels[item.priority]}</td>
+                  <td data-label="Percobaan">{item.attempts}/{item.maxAttempts}</td>
+                  <td data-label="Percobaan berikutnya">{formatDate(item.nextAttemptAt)}</td>
+                  <td data-label="Aksi">
                     <div className="table-actions">
                       <button className="button" type="button" onClick={() => navigate(`/messages/${item.messageId}`)}>
-                        Timeline
+                        Lihat detail
                       </button>
                       {['queued', 'scheduled', 'retrying', 'safety_delayed'].includes(item.state) && (
                         <button
@@ -133,7 +154,7 @@ export const OutboxPage = ({ user }: OutboxPageProps) => {
                           type="button"
                           onClick={() => cancel.mutate(item.id)}
                         >
-                          Cancel
+                          Batalkan
                         </button>
                       )}
                       {item.state === 'failed' && (
@@ -143,11 +164,13 @@ export const OutboxPage = ({ user }: OutboxPageProps) => {
                           type="button"
                           onClick={() => retry.mutate(item.id)}
                         >
-                          Controlled retry
+                          Coba kirim lagi
                         </button>
                       )}
                       {item.state === 'unknown_outcome' && (
-                        <small className="unknown-label">Reconciliation required — blind retry disabled</small>
+                        <small className="unknown-label">
+                          Hasil pengiriman belum pasti — periksa manual sebelum mencoba ulang.
+                        </small>
                       )}
                     </div>
                   </td>

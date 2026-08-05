@@ -30,6 +30,8 @@ jobs:
           cache-dependency-path: whatsapp-control-panel/package-lock.json
       - name: Install
         run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: Check
         run: npm run check
 
@@ -52,6 +54,12 @@ jobs:
           cache-dependency-path: simple-whatsapp-chatbot/package-lock.json
       - name: Install
         run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Prepare Compose validation environment
+        run: cp .env.example .env
+      - name: Validate AI foundation infrastructure
+        run: docker compose -f compose.yaml -f compose.ai-development.yaml config --quiet
       - name: Check
         run: npm run check
 

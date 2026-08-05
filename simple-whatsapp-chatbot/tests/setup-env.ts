@@ -9,4 +9,15 @@ process.env.WA_AUTH_PATH = './auth-test';
 process.env.ADMIN_BOOTSTRAP_USERNAME = 'admin';
 process.env.ADMIN_BOOTSTRAP_PASSWORD = 'admin123';
 process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME = 'Test Admin';
+process.env.SUPERADMIN_BOOTSTRAP_USERNAME = 'superadmin';
+process.env.SUPERADMIN_BOOTSTRAP_PASSWORD = 'superadmin123';
+process.env.SUPERADMIN_BOOTSTRAP_DISPLAY_NAME = 'SUPERADMIN';
 process.env.ADMIN_SESSION_TTL_HOURS = '8';
+process.env.AI_CHATBOT_ENABLED = 'false';
+process.env.AI_CHATBOT_STRICT_GROUNDING = 'true';
+process.env.AI_CHATBOT_DEFAULT_TENANT_ID =
+  '00000000-0000-4000-8000-000000000001';
+process.env.AI_CHATBOT_DEFAULT_TENANT_SLUG = 'raho';
+process.env.AI_CHATBOT_DEFAULT_TENANT_NAME = 'RAHO';
+process.env.AI_CHATBOT_ALPHA_RUNTIME_ENABLED = 'false';
+process.env.AI_CHATBOT_PROVIDER_BASE_URL = 'https://api.openai.com/v1';

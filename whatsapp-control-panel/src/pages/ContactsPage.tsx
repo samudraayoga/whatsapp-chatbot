@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { getContact, getContacts } from '../api/inbox';
 import { StatusBadge } from '../components/StatusBadge';
@@ -36,12 +36,6 @@ export const ContactsPage = ({ pathname }: ContactsPageProps) => {
     [contacts.data]
   );
 
-  useEffect(() => {
-    if (pathname === '/contacts' && items[0]) {
-      navigate(`/contacts/${items[0].id}`, true);
-    }
-  }, [items, pathname]);
-
   const detail = useQuery({
     queryKey: ['contact', routeId],
     queryFn: () => getContact(routeId!),
@@ -53,13 +47,13 @@ export const ContactsPage = ({ pathname }: ContactsPageProps) => {
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 3 · Identity facade</p>
-          <h1>Contacts</h1>
-          <p>Cari contact dan tinjau pemetaan identitas WhatsApp yang aman.</p>
+          <p className="eyebrow">Percakapan</p>
+          <h1>Kontak</h1>
+          <p>Cari kontak dan lihat riwayat interaksinya.</p>
         </div>
       </header>
 
-      <div className="contacts-layout">
+      <div className="contacts-layout" data-view={routeId ? 'detail' : 'list'}>
         <aside className="contact-list-pane">
           <div className="inbox-toolbar">
             <label>
@@ -84,6 +78,7 @@ export const ContactsPage = ({ pathname }: ContactsPageProps) => {
             <div className="conversation-list">
               {items.map((item) => (
                 <button
+                  aria-pressed={item.id === routeId}
                   className="conversation-item"
                   data-active={item.id === routeId}
                   key={item.id}
@@ -120,6 +115,13 @@ export const ContactsPage = ({ pathname }: ContactsPageProps) => {
             <p className="form-alert form-alert--error">Profil contact gagal dimuat.</p>
           ) : (
             <>
+              <button
+                className="button mobile-back-button"
+                onClick={() => navigate('/contacts')}
+                type="button"
+              >
+                ← Daftar kontak
+              </button>
               <div className="contact-profile-heading">
                 <span className="contact-avatar contact-avatar--large" aria-hidden="true">
                   {(contact.displayName ?? '?').slice(0, 1).toUpperCase()}

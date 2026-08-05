@@ -6,32 +6,21 @@ import {
 } from '../services/audit.service.js';
 import { OperationalEventService } from '../services/operational-event.service.js';
 import { OverviewService } from '../services/overview.service.js';
-import { AdminAuthService } from '../services/admin-auth.service.js';
 import {
   CredentialResetNotAllowedError,
   ReconnectNotAllowedError,
   WhatsAppService
 } from '../services/whatsapp.service.js';
 
-const parseResetReason = (value: unknown): string => {
-  const reason = typeof value === 'string' ? value.trim() : '';
-  if (reason.length < 5 || reason.length > 500) {
-    throw new AppError(
-      'Reason must contain 5 to 500 characters',
-      400,
-      'SESSION_RESET_REASON_INVALID'
-    );
-  }
-  return reason;
-};
+const SESSION_RESET_AUDIT_REASON =
+  'Admin requested WhatsApp credential reset';
 
 export class AdminSessionController {
   constructor(
     private readonly whatsappService: WhatsAppService,
     private readonly overviewService: OverviewService,
     private readonly auditService: AuditService,
-    private readonly operationalEvents: OperationalEventService,
-    private readonly authService: AdminAuthService
+    private readonly operationalEvents: OperationalEventService
   ) {}
 
   getSession = async (
@@ -147,36 +136,11 @@ export class AdminSessionController {
     const before = this.whatsappService.getOperationalStatus();
 
     try {
-      const reason = parseResetReason(request.body?.reason);
-      if (request.body?.confirmation !== 'RESET_WHATSAPP_SESSION') {
-        throw new AppError(
-          'Type RESET_WHATSAPP_SESSION to confirm',
-          400,
-          'SESSION_RESET_CONFIRMATION_REQUIRED'
-        );
-      }
-      const currentPassword =
-        typeof request.body?.currentPassword === 'string'
-          ? request.body.currentPassword
-          : '';
-      if (
-        !(await this.authService.verifyUserPassword(
-          request.adminAuth!.id,
-          currentPassword
-        ))
-      ) {
-        throw new AppError(
-          'Step-up authentication failed',
-          403,
-          'STEP_UP_AUTHENTICATION_FAILED'
-        );
-      }
-
       await this.auditService.record({
         actorUserId: request.adminAuth!.id,
         action: 'session.auth_reset_requested',
         resourceType: 'whatsapp_session',
-        reason,
+        reason: SESSION_RESET_AUDIT_REASON,
         beforeState: before,
         requestId: request.requestId,
         ipAddress: request.ip,
@@ -188,7 +152,7 @@ export class AdminSessionController {
         actorUserId: request.adminAuth!.id,
         action: 'session.auth_reset',
         resourceType: 'whatsapp_session',
-        reason,
+        reason: SESSION_RESET_AUDIT_REASON,
         beforeState: before,
         afterState: overview.session,
         requestId: request.requestId,

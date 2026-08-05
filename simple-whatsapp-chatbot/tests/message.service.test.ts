@@ -154,6 +154,7 @@ describe('MessageService deduplication characterization', () => {
     await service.applyChatbotEvaluation({
       whatsappMessageId: 'provider-menu-5',
       chatbotVersionId: 'version-1',
+      chatbotRevision: 7,
       chatbotRuleId: 'rule-5',
       createHandoff: true
     });
@@ -163,6 +164,7 @@ describe('MessageService deduplication characterization', () => {
     expect(metadataCall[1]?.[1]).toBe(
       JSON.stringify({
         chatbotVersionId: 'version-1',
+        chatbotRevision: 7,
         chatbotRuleId: 'rule-5'
       })
     );

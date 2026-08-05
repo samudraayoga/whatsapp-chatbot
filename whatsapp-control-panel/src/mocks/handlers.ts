@@ -1,4 +1,6 @@
 import { delay, http, HttpResponse } from 'msw';
+import type { ChatbotRule, KnowledgeItem } from '../api/contracts';
+import { normalizeChatbotTrigger } from '../chatbot/editor';
 import { getOverviewScenario } from './scenario';
 import {
   mockContacts,
@@ -11,11 +13,30 @@ import {
   mockOutboxItems
 } from './outbox-fixtures';
 import { mockSafetyCenter } from './safety-fixtures';
+import {
+  mockChatbotConfig,
+  mockChatbotMeta
+} from './chatbot-fixtures';
+import {
+  mockAiChatbotFoundation,
+  mockAiIntegration,
+  mockAiPrompts,
+  mockAiRagResult,
+  mockKnowledge,
+  mockKnowledgeCategories,
+  mockKnowledgeDocuments
+} from './ai-chatbot-fixtures';
 
 const composeReplay = new Map<
   string,
   { payload: string; data: { id: string; outboxId: string; state: 'accepted' } }
 >();
+
+let activeMockChatbotConfig = structuredClone(mockChatbotConfig);
+
+export const resetMockChatbotConfig = () => {
+  activeMockChatbotConfig = structuredClone(mockChatbotConfig);
+};
 
 const meta = (nextCursor: string | null = null) => ({
   requestId: 'req_mock_sprint_3',
@@ -156,6 +177,11 @@ export const handlers = [
           { status: 404 }
         );
   }),
+  http.get('*/api/admin/v1/ai-chatbot/handoffs', ({ request }) => {
+    const state = new URL(request.url).searchParams.get('state') ?? 'open';
+    const data = state === 'all' ? mockHandoffs : mockHandoffs.filter((handoff) => handoff.state === state);
+    return HttpResponse.json({ data, meta: meta() });
+  }),
   http.get('*/api/admin/v1/handoffs', ({ request }) => {
     const state = new URL(request.url).searchParams.get('state') ?? 'open';
     const data =
@@ -163,6 +189,11 @@ export const handlers = [
         ? mockHandoffs
         : mockHandoffs.filter((handoff) => handoff.state === state);
     return HttpResponse.json({ data, meta: meta() });
+  }),
+  http.get('*/api/admin/v1/handoffs/:handoffId', ({ params }) => {
+    const handoff = mockHandoffs.find((candidate) => candidate.id === String(params.handoffId));
+    return handoff ? HttpResponse.json({ data: handoff, meta: meta() })
+      : HttpResponse.json({ error: { code: 'HANDOFF_NOT_FOUND', message: 'Not found', requestId: 'mock' } }, { status: 404 });
   }),
   http.post('*/api/admin/v1/handoffs/:handoffId/assign', ({ params }) => {
     const handoff = mockHandoffs.find(
@@ -193,6 +224,15 @@ export const handlers = [
       },
       meta: meta()
     });
+  }),
+  http.post('*/api/admin/v1/handoffs/:handoffId/in-progress', ({ params }) => {
+    const handoff = mockHandoffs.find((candidate) => candidate.id === String(params.handoffId));
+    return HttpResponse.json({ data: { ...handoff, state: 'in_progress', updatedAt: new Date().toISOString() }, meta: meta() });
+  }),
+  http.post('*/api/admin/v1/handoffs/:handoffId/close', async ({ params, request }) => {
+    const body = (await request.json()) as { resolutionNote?: string };
+    const handoff = mockHandoffs.find((candidate) => candidate.id === String(params.handoffId));
+    return HttpResponse.json({ data: { ...handoff, state: 'closed', resolutionNote: body.resolutionNote ?? '', resolvedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, meta: meta() });
   }),
   http.post('*/api/admin/v1/messages', async ({ request }) => {
     const key = request.headers.get('Idempotency-Key') ?? '';
@@ -291,5 +331,316 @@ export const handlers = [
   ),
   http.post('*/api/admin/v1/session/reconnect', () =>
     HttpResponse.json(sessionPayload(), { status: 202 })
-  )
+  ),
+  http.get('*/api/admin/v1/chatbot/config', () =>
+    HttpResponse.json({
+      data: structuredClone(activeMockChatbotConfig),
+      meta: mockChatbotMeta()
+    })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/foundation', () =>
+    HttpResponse.json(structuredClone(mockAiChatbotFoundation))
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/integration', () =>
+    HttpResponse.json(structuredClone(mockAiIntegration))
+  ),
+  http.put('*/api/admin/v1/ai-chatbot/integration', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const response = structuredClone(mockAiIntegration);
+    response.data.integration = {
+      ...response.data.integration,
+      ...body,
+      provider: String(body.provider ?? response.data.integration.provider),
+      chatModel: String(body.chatModel ?? response.data.integration.chatModel),
+      embeddingProvider: String(
+        body.embeddingProvider ?? response.data.integration.embeddingProvider
+      ),
+      embeddingModel: String(
+        body.embeddingModel ?? response.data.integration.embeddingModel
+      ),
+      revision: Number(body.expectedRevision ?? 1) + 1,
+      updatedAt: new Date().toISOString()
+    };
+    return HttpResponse.json(response);
+  }),
+  http.post('*/api/admin/v1/ai-chatbot/integration/test-connection', () =>
+    HttpResponse.json({
+      data: {
+        chatProvider: 'reachable',
+        embeddingProvider: 'reachable',
+        testedAt: new Date().toISOString()
+      },
+      meta: mockAiIntegration.meta
+    })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/integration/activate', () =>
+    HttpResponse.json(
+      {
+        error: {
+          code: 'AI_ACTIVATION_BLOCKED',
+          message: 'Customer runtime is intentionally unavailable.',
+          details: { blockers: mockAiIntegration.data.readiness.blockers },
+          requestId: 'req_mock_ai_activation'
+        }
+      },
+      { status: 409 }
+    )
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/playground/test', () =>
+    HttpResponse.json(structuredClone(mockAiRagResult))
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/playground/test-cases', () =>
+    HttpResponse.json({ data: [], meta: meta() })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/conversations', () =>
+    HttpResponse.json({ data: [], meta: meta() })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/unanswered', () =>
+    HttpResponse.json({ data: [], meta: meta() })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/prompts', () =>
+    HttpResponse.json(structuredClone(mockAiPrompts))
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/prompts', () =>
+    HttpResponse.json(
+      {
+        data: structuredClone(mockAiPrompts.data[0]),
+        meta: mockAiPrompts.meta
+      },
+      { status: 201 }
+    )
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/prompts/:promptId/approve', () =>
+    HttpResponse.json({
+      data: {
+        ...structuredClone(mockAiPrompts.data[0]),
+        status: 'approved',
+        approvedBy: '2a99543d-80d5-47a0-92ef-a389ce1a3001',
+        approvedAt: new Date().toISOString()
+      },
+      meta: mockAiPrompts.meta
+    })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/prompts/:promptId/publish', () =>
+    HttpResponse.json({
+      data: {
+        ...structuredClone(mockAiPrompts.data[0]),
+        status: 'published',
+        publishedAt: new Date().toISOString()
+      },
+      meta: mockAiPrompts.meta
+    })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/categories', () =>
+    HttpResponse.json(structuredClone(mockKnowledgeCategories))
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/categories', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledgeCategories.data[0]),
+        id: '50d691f4-9d89-4c57-b147-7525371a569b',
+        ...body,
+        revision: 1,
+        knowledgeCount: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledgeCategories.meta
+    }, { status: 201 });
+  }),
+  http.put('*/api/admin/v1/ai-chatbot/categories/:categoryId', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledgeCategories.data[0]),
+        ...body,
+        revision: Number(body.expectedRevision ?? 1) + 1,
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledgeCategories.meta
+    });
+  }),
+  http.delete('*/api/admin/v1/ai-chatbot/categories/:categoryId', () =>
+    new HttpResponse(null, { status: 204 })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/knowledge', () =>
+    HttpResponse.json(structuredClone(mockKnowledge))
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/knowledge/:knowledgeId', () =>
+    HttpResponse.json({ data: structuredClone(mockKnowledge.data[0]), meta: mockKnowledge.meta })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/knowledge', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledge.data[0]),
+        id: '2964bcc1-a42a-4d82-82fa-845d562ab283',
+        versionId: 'cb0ad6bf-50a2-4b1d-aa7c-eb8291799c60',
+        ...body,
+        categoryName: null,
+        version: 1,
+        revision: 1,
+        status: 'draft',
+        contentFingerprint: 'b'.repeat(64),
+        expired: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledge.meta
+    }, { status: 201 });
+  }),
+  http.put('*/api/admin/v1/ai-chatbot/knowledge/:knowledgeId', async ({ request }) => {
+    const body = (await request.json()) as { knowledge: Partial<KnowledgeItem>; expectedRevision: number };
+    return HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledge.data[0]),
+        ...body.knowledge,
+        revision: body.expectedRevision + 1,
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledge.meta
+    });
+  }),
+  http.delete('*/api/admin/v1/ai-chatbot/knowledge/:knowledgeId', () =>
+    new HttpResponse(null, { status: 204 })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/knowledge/bulk-action', async ({ request }) => {
+    const body = (await request.json()) as { action: 'publish' | 'archive' };
+    return HttpResponse.json({
+      data: mockKnowledge.data.map((item) => ({ ...structuredClone(item), status: body.action === 'publish' ? 'published' : 'archived', revision: item.revision + 1 })),
+      meta: mockKnowledge.meta
+    });
+  }),
+  http.post('*/api/admin/v1/ai-chatbot/knowledge/:knowledgeId/:transition', ({ params }) => {
+    const statusByTransition: Record<string, KnowledgeItem['status']> = {
+      'submit-review': 'review', 'request-revision': 'draft', approve: 'approved', publish: 'published', archive: 'archived'
+    };
+    return HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledge.data[0]),
+        status: statusByTransition[String(params.transition)] ?? 'draft',
+        revision: mockKnowledge.data[0]!.revision + 1,
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledge.meta
+    });
+  }),
+  http.get('*/api/admin/v1/ai-chatbot/documents', () =>
+    HttpResponse.json(structuredClone(mockKnowledgeDocuments))
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/documents/:documentId/preview', () =>
+    HttpResponse.json({
+      data: {
+        document: structuredClone(mockKnowledgeDocuments.data[0]),
+        extractionPreview: 'Panduan layanan resmi RAHO untuk kebutuhan informasi umum.',
+        chunks: [{
+          id: '115c1792-2d09-4438-a214-d773231bb499', chunkIndex: 0,
+          title: 'panduan-layanan.txt', section: null,
+          content: 'Panduan layanan resmi RAHO untuk kebutuhan informasi umum.',
+          tokenCount: 12, status: 'active', embeddingModel: 'mock-embed-v1',
+          metadata: { sourceType: 'document' }
+        }]
+      },
+      meta: mockKnowledgeDocuments.meta
+    })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/documents/:documentId/:action', ({ params }) =>
+    HttpResponse.json({
+      data: {
+        ...structuredClone(mockKnowledgeDocuments.data[0]),
+        status: params.action === 'archive' ? 'archived' : 'queued',
+        updatedAt: new Date().toISOString()
+      },
+      meta: mockKnowledgeDocuments.meta
+    }, { status: params.action === 'archive' ? 200 : 202 })
+  ),
+  http.delete('*/api/admin/v1/ai-chatbot/documents/:documentId', () =>
+    new HttpResponse(null, { status: 204 })
+  ),
+  http.post('*/api/admin/v1/ai-chatbot/knowledge/search-test', () =>
+    HttpResponse.json({
+      data: [{
+        chunkId: '115c1792-2d09-4438-a214-d773231bb499',
+        title: 'panduan-layanan.txt', section: null,
+        content: 'Panduan layanan resmi RAHO untuk kebutuhan informasi umum.',
+        score: 0.91, sourceType: 'document',
+        documentId: '03d5c308-8124-4d65-b8ab-2ba94691de09',
+        knowledgeVersionId: null
+      }],
+      meta: mockKnowledgeDocuments.meta
+    })
+  ),
+  http.put('*/api/admin/v1/chatbot/config', async ({ request }) => {
+    const body = (await request.json()) as {
+      expectedRevision: number;
+      rules: ChatbotRule[];
+    };
+
+    if (body.expectedRevision !== activeMockChatbotConfig.revision) {
+      return HttpResponse.json(
+        {
+          error: {
+            code: 'CHATBOT_CONFIG_CONFLICT',
+            message: 'Chatbot configuration was updated by another Admin',
+            requestId: 'req_mock_chatbot_conflict'
+          }
+        },
+        { status: 409 }
+      );
+    }
+
+    activeMockChatbotConfig = {
+      revision: body.expectedRevision + 1,
+      updatedAt: new Date().toISOString(),
+      rules: body.rules.map((rule) => ({
+        ...structuredClone(rule),
+        id: rule.id ?? globalThis.crypto.randomUUID()
+      }))
+    };
+    return HttpResponse.json({
+      data: structuredClone(activeMockChatbotConfig),
+      meta: mockChatbotMeta()
+    });
+  }),
+  http.post('*/api/admin/v1/chatbot/test', async ({ request }) => {
+    const body = (await request.json()) as {
+      input: string;
+      rules: ChatbotRule[];
+    };
+    const normalizedInput = normalizeChatbotTrigger(body.input);
+    const enabledRules = body.rules
+      .filter((rule) => rule.enabled)
+      .sort((left, right) => left.priority - right.priority);
+    const matchedRule =
+      enabledRules.find((rule) => {
+        if (rule.triggerType === 'empty') return normalizedInput.length === 0;
+        if (rule.triggerType === 'fallback') return false;
+        return rule.triggerValues.some(
+          (value) => normalizeChatbotTrigger(value) === normalizedInput
+        );
+      }) ??
+      enabledRules.find((rule) => rule.triggerType === 'fallback') ??
+      null;
+
+    return HttpResponse.json({
+      data: {
+        normalizedInput,
+        matchedRule: matchedRule
+          ? {
+              ...(matchedRule.id ? { id: matchedRule.id } : {}),
+              triggerType: matchedRule.triggerType,
+              priority: matchedRule.priority,
+              matchedTrigger:
+                matchedRule.triggerValues.find(
+                  (value) => normalizeChatbotTrigger(value) === normalizedInput
+                ) ?? null,
+              action: matchedRule.action
+            }
+          : null,
+        response: matchedRule?.responseText ?? ''
+      },
+      meta: mockChatbotMeta()
+    });
+  })
 ];

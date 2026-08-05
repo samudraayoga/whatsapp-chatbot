@@ -29,6 +29,7 @@ export const getConversations = async (input: {
   status?: 'all' | 'has_failure' | 'identity_warning';
   cursor?: string;
   limit?: number;
+  ai?: boolean;
 }): Promise<ConversationListResponse> => {
   return conversationListResponseSchema.parse(
     await requestJson(
@@ -83,13 +84,14 @@ export const getContact = async (
 };
 
 export const getHandoffs = async (input: {
-  state?: 'all' | 'open' | 'assigned' | 'resolved' | 'canceled';
+  state?: 'all' | 'open' | 'assigned' | 'in_progress' | 'resolved' | 'closed' | 'canceled';
   cursor?: string;
   limit?: number;
+  ai?: boolean;
 }): Promise<HandoffListResponse> => {
   return handoffListResponseSchema.parse(
     await requestJson(
-      `/api/admin/v1/handoffs${queryString({
+      `/api/admin/v1/${input.ai ? 'ai-chatbot/' : ''}handoffs${queryString({
         state: input.state,
         cursor: input.cursor,
         limit: input.limit
@@ -97,6 +99,11 @@ export const getHandoffs = async (input: {
     )
   );
 };
+
+export const getHandoff = async (handoffId: string, ai = false): Promise<HandoffResponse> =>
+  handoffResponseSchema.parse(
+    await requestJson(`/api/admin/v1/${ai ? 'ai-chatbot/' : ''}handoffs/${encodeURIComponent(handoffId)}`)
+  );
 
 const csrfHeaders = (): HeadersInit => {
   const token = readCookie('admin_csrf');
@@ -107,11 +114,12 @@ const csrfHeaders = (): HeadersInit => {
 };
 
 export const claimHandoff = async (
-  handoffId: string
+  handoffId: string,
+  ai = false
 ): Promise<HandoffResponse> => {
   return handoffResponseSchema.parse(
     await requestJson(
-      `/api/admin/v1/handoffs/${encodeURIComponent(handoffId)}/assign`,
+      `/api/admin/v1/${ai ? 'ai-chatbot/' : ''}handoffs/${encodeURIComponent(handoffId)}/assign`,
       {
         method: 'POST',
         headers: csrfHeaders(),
@@ -123,11 +131,12 @@ export const claimHandoff = async (
 
 export const resolveHandoff = async (
   handoffId: string,
-  resolutionNote: string
+  resolutionNote: string,
+  ai = false
 ): Promise<HandoffResponse> => {
   return handoffResponseSchema.parse(
     await requestJson(
-      `/api/admin/v1/handoffs/${encodeURIComponent(handoffId)}/resolve`,
+      `/api/admin/v1/${ai ? 'ai-chatbot/' : ''}handoffs/${encodeURIComponent(handoffId)}/resolve`,
       {
         method: 'POST',
         headers: csrfHeaders(),
@@ -136,3 +145,20 @@ export const resolveHandoff = async (
     )
   );
 };
+
+export const startHandoff = async (handoffId: string, ai = false): Promise<HandoffResponse> =>
+  handoffResponseSchema.parse(
+    await requestJson(`/api/admin/v1/${ai ? 'ai-chatbot/' : ''}handoffs/${encodeURIComponent(handoffId)}/in-progress`, {
+      method: 'POST', headers: csrfHeaders(), body: JSON.stringify({})
+    })
+  );
+
+export const closeHandoff = async (
+  handoffId: string,
+  resolutionNote: string,
+  ai = false
+): Promise<HandoffResponse> => handoffResponseSchema.parse(
+  await requestJson(`/api/admin/v1/${ai ? 'ai-chatbot/' : ''}handoffs/${encodeURIComponent(handoffId)}/close`, {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ resolutionNote })
+  })
+);

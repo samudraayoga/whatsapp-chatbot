@@ -9,11 +9,12 @@ import {
 
 describe('WhatsApp reconnect policy', () => {
   it.each([
+    ['connected', null],
     ['logged_out', 'logged_out'],
     ['bad_session', 'bad_session'],
     ['disconnected', 'fatal']
   ] as const)(
-    'allows credential reset for terminal state %s with %s classification',
+    'allows credential reset for eligible state %s with %s classification',
     (state, lastDisconnectClassification) => {
       expect(
         canResetWhatsAppCredentials({
@@ -25,7 +26,7 @@ describe('WhatsApp reconnect policy', () => {
     }
   );
 
-  it.each(['connected', 'connecting', 'qr_required', 'reconnecting'] as const)(
+  it.each(['connecting', 'qr_required', 'reconnecting'] as const)(
     'blocks credential reset while state is %s',
     (state) => {
       expect(

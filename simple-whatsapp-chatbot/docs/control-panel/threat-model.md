@@ -44,7 +44,7 @@ Admin browser
 | QR leakage | QR masuk log/screenshot monitoring | In-memory TTL, no-log, role restriction, immediate invalidation |
 | PII leakage | Full phone/message masuk structured log | Masking, log schema, retention, access control |
 | Duplicate send | Browser retry setelah timeout | Idempotency key, durable outbox, unknown outcome |
-| Safety bypass | Reset untuk menghapus limit | Guarded command, reason, step-up, audit |
+| Safety bypass | Reset untuk menghapus limit | Guarded safety command, reason, step-up, audit |
 | Audit tampering | Admin menghapus jejak | Append-only application permission, backup/retention |
 | Event spoofing | Client mengirim fake status | Status hanya berasal dari backend; SSE read-only |
 | Dependency compromise | Package frontend/backend berbahaya | Lockfile, audit, review, CI |
@@ -87,13 +87,16 @@ Admin browser
 
 - Operator hanya mendapat `safety.pause`; `safety.resume` dan `session.reset`
   tetap permission Admin.
-- Resume/reset memerlukan CSRF, mutation rate limit, alasan 5–500 karakter,
-  exact acknowledgement/confirmation, dan verifikasi password saat ini.
+- Safety resume/reset memerlukan CSRF, mutation rate limit, alasan 5–500
+  karakter, exact acknowledgement/confirmation, dan verifikasi password saat
+  ini.
+- Credential reset/re-pair memerlukan permission `session.reset`, CSRF, mutation
+  rate limit, dan audit, tetapi tidak memerlukan request body atau step-up.
 - Recovery `paused`/`dead` dan timelock aktif tidak dapat dilewati oleh resume.
 - Reset default-off melalui `SAFETY_RESET_ENABLED`, memerlukan eligibility, dan
   tetap meninggalkan sending dalam manual pause.
-- Pause/resume/reset menyimpan actor, alasan, before/after state, request ID, IP,
-  dan user agent pada audit.
+- Pause/resume/reset menyimpan actor, alasan operator atau alasan server-side,
+  before/after state, request ID, IP, dan user agent pada audit.
 - Safety delay menyimpan reason code dan rekomendasi tersanitasi pada message
   event; raw error/JID tidak dipantulkan ke UI.
 - Manual pause dipersist di PostgreSQL dan direstore sebelum koneksi WhatsApp.

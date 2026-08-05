@@ -69,7 +69,7 @@ Prinsip utamanya adalah **observe before control**. Operator harus dapat melihat
 | `AntiBan.getStats()`, `pause()`, dan `resume()` tersedia di wrapped socket | Safety Center dapat memakai facade resmi, bukan membaca file state | Tambahkan API adapter dengan RBAC dan audit |
 | State anti-ban tersimpan sebagai JSON internal | Mengedit file dari UI berisiko korup/race | File state hanya dibaca library; UI memakai typed service facade |
 | JID canonicalizer belum aktif | Satu orang bisa muncul sebagai dua contact | Selesaikan strategi LID/PN sebelum fitur merge/edit contact |
-| Chatbot rules masih hardcoded dan menu 3/4 tidak selaras | Editor rule belum bisa langsung menyimpan perubahan | Perbaiki konten lalu pindahkan rules ke storage berversi |
+| Chatbot rules masih hardcoded dan menu 3/4 tidak selaras | Editor rule belum bisa langsung menyimpan perubahan | Perbaiki konten lalu pindahkan rules ke satu konfigurasi aktif dengan revision guard |
 | App belum mempunyai automated tests | Perubahan admin API berisiko merusak send/reconnect | Test harness menjadi gate di Sprint 0 |
 | Modul queue/scheduler/webhook/fleet masih opsional | Tidak layak ditampilkan seolah sudah aktif | Gunakan feature flag dan label “belum dikonfigurasi” |
 
@@ -170,9 +170,7 @@ Control Panel
 │   ├── Queue & Scheduler
 │   └── Incidents
 ├── Chatbot
-│   ├── Rules
-│   ├── Test Console
-│   └── Version History
+│   └── Rules + Test Console
 └── Settings
     ├── General
     ├── Users & Roles
@@ -525,7 +523,8 @@ Statistik session stability yang belum menerima event instrumentation harus bers
 
 ## 7.9 Chatbot Rules dan Test Console
 
-Sebelum UI editor aktif, pindahkan rule hardcoded ke model berversi.
+Rule chatbot disimpan sebagai satu konfigurasi aktif. Revision hanya dipakai
+sebagai optimistic concurrency guard dan tidak menjadi lifecycle produk.
 
 Rule fields:
 
@@ -534,14 +533,12 @@ Rule fields:
 - Response text.
 - Priority/order.
 - Enabled state.
-- Effective version.
-- Created/updated/approved by.
+- Revision dan waktu update dikelola otomatis.
 
 Workflow:
 
 ```text
-Draft → Validate → Test → Publish → Active
-                              └── Roll back to prior version
+Edit → Validate → Test → Simpan & aktifkan
 ```
 
 Test Console:
@@ -551,9 +548,9 @@ Test Console:
 - Rule yang matched.
 - Response preview.
 - Tidak mengirim ke WhatsApp.
-- Test cases untuk `halo`, `hai`, `hello`, `menu`, kosong, `1`–`5`, dan fallback.
+- Test cases untuk `halo`, `hai`, `hello`, `menu`, kosong, `0`–`10`, dan fallback.
 
-Blocker sebelum publish pertama:
+Persiapan konten awal:
 
 - Putuskan konten benar untuk menu nomor 3 dan 4.
 - Sinkronkan README, source, test fixture, dan UI.
@@ -757,9 +754,9 @@ Gunakan prefix berversi:
 | `GET /api/admin/v1/safety/stats` | Baru | `AntiBan.getStats()` facade |
 | `POST /api/admin/v1/safety/pause` | Baru | Emergency pause |
 | `POST /api/admin/v1/safety/resume` | Baru | Admin resume |
-| `GET /api/admin/v1/chatbot/versions` | Baru | Version list |
-| `POST /api/admin/v1/chatbot/test` | Baru | Dry-run |
-| `POST /api/admin/v1/chatbot/versions/:id/publish` | Baru | Publish |
+| `GET /api/admin/v1/chatbot/config` | Ada | Baca konfigurasi aktif |
+| `PUT /api/admin/v1/chatbot/config` | Ada | Simpan dan langsung aktifkan full rule set |
+| `POST /api/admin/v1/chatbot/test` | Ada | Preview rule editor yang belum disimpan |
 | `GET /api/admin/v1/incidents` | Baru | Operational timeline |
 | `GET /api/admin/v1/audit-logs` | Baru | Audit query |
 
@@ -901,8 +898,8 @@ Tambahkan:
 | `handoff_tasks` | Follow-up operator dari menu/rule yang membutuhkan manusia |
 | `operational_events` | Connection/risk/queue incident source |
 | `incidents` | Acknowledgement dan resolution workflow |
-| `chatbot_rule_versions` | Draft/published rule set |
-| `chatbot_rules` | Rules dalam sebuah version |
+| `chatbot_rule_versions` | Compatibility storage untuk satu konfigurasi aktif |
+| `chatbot_rules` | Rule pada konfigurasi aktif |
 | `admin_users`/`external_identities` | Identity mapping bila tidak sepenuhnya memakai IdP |
 | `audit_logs` | Append-only administrative action |
 
@@ -989,7 +986,8 @@ Selalu gabungkan warna dengan icon, text label, dan bila perlu pattern; jangan m
 - Message content tidak ditulis ke application log.
 - QR hanya in-memory dan berumur pendek.
 - Audit log append-only.
-- Reason wajib untuk resume pada risk tinggi, reset, re-pair, publish rule, dan retry-as-new.
+- Reason wajib untuk resume pada risk tinggi dan retry-as-new. Credential reset
+  memakai alasan server-side; perubahan rule memakai revision/hash/count audit.
 - Data retention default diusulkan 90 hari untuk content/event; keputusan final mengikuti kebutuhan bisnis/legal.
 - Export atau delete data harus menjadi fitur terpisah dengan authorization dan audit.
 - Backup dan restore test mencakup database/outbox, tetapi credential backup memiliki prosedur terpisah.
@@ -1264,40 +1262,40 @@ Demo:
 Frontend:
 
 - Rule list/editor.
-- Draft validation.
-- Test Console.
-- Diff version.
-- Publish dan rollback confirmation.
-- Version history.
+- Validasi lokal.
+- Test Console memakai perubahan yang belum disimpan.
+- Batalkan perubahan lokal.
+- Satu tombol `Simpan & aktifkan`.
 
 Backend:
 
-- Storage rule/version.
-- Runtime rule engine memakai active immutable version.
+- Satu konfigurasi aktif di compatibility storage yang sudah ada.
+- Runtime rule engine membaca snapshot konfigurasi aktif.
 - Test endpoint tanpa send side effect.
-- Publish transaction dan cache invalidation.
-- Audit create/edit/publish/rollback.
-- Migration current hardcoded rules menjadi version 1.
+- Full-set update transaction, revision conflict, dan cache invalidation.
+- Audit intent dan outcome perubahan konfigurasi.
+- Seed current hardcoded rules menjadi konfigurasi awal.
 
 QA:
 
 - Golden cases menu, empty, alias, numeric choice, fallback.
-- Draft tidak memengaruhi active version.
-- Concurrent publish conflict.
-- Rollback mengaktifkan exact previous version.
+- Preview perubahan lokal tidak memengaruhi konfigurasi aktif.
+- Concurrent save conflict.
+- Insert failure melakukan rollback transaction.
 - Invalid/duplicate priority ditolak.
 
 Acceptance criteria:
 
-- Response production selalu menunjuk active version ID.
+- Response production selalu memakai satu snapshot konfigurasi aktif.
 - Admin dapat preview exact normalized match.
-- Publish membutuhkan summary diff dan confirmation.
+- Save langsung aktif dan memakai expected revision.
 - Viewer/Operator tidak dapat mengubah rule.
 - Menu 3/4 terverifikasi oleh test.
 
 Demo:
 
-- Edit draft, test, publish, incoming message memakai version baru, rollback.
+- Edit rule, test perubahan lokal, simpan & aktifkan, lalu incoming message
+  memakai revision baru.
 
 ## Sprint 6 — Safety Center dan Recovery Workflow
 
@@ -1436,7 +1434,7 @@ Critical path ke MVP adalah auth → query API → outbox/idempotency → compos
 ### P1 — Wajib sebelum GA
 
 - Safety Center.
-- Chatbot versioning/editor.
+- Chatbot active-config editor dengan alur edit → test → simpan & aktifkan.
 - Delivery receipt persistence.
 - Incident timeline dan alert.
 - Queue/dead-letter/scheduler.
@@ -1448,7 +1446,7 @@ Critical path ke MVP adalah auth → query API → outbox/idempotency → compos
 - Multi-session/fleet overview.
 - Broadcast/campaign dengan consent dan policy guard.
 - Media message.
-- Advanced config editor dan rollout/rollback.
+- Advanced safety config editor dengan staged rollout.
 - Contact merge UI.
 - Proxy/fleet event topology.
 - Analytics dan export.
@@ -1471,7 +1469,7 @@ Critical path ke MVP adalah auth → query API → outbox/idempotency → compos
 | Nilai metric nol berasal dari modul yang belum diinstrumentasi | Kondisi rusak terlihat sehat | `not_instrumented`/`unavailable`, bukan zero |
 | Modul opsional dianggap aktif | Data dashboard menyesatkan | Explicit feature capability endpoint |
 | Test library/chatbot tidak konsisten | Regression tersembunyi | Sprint 0 test gate dan runner standardization |
-| Rule editor mengubah respons tanpa review | Customer menerima konten salah | Draft/test/version/publish/rollback |
+| Rule editor mengubah respons salah | Customer menerima konten salah | Validasi, preview lokal, revision conflict, audit, dan atomic save |
 | Log/DB berisi PII terlalu lama | Risiko privacy | Masking, permission, retention, audit |
 
 ---

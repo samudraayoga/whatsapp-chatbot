@@ -1,5 +1,7 @@
 import { Boom } from '@hapi/boom';
-import type { ConnectionState } from '@whiskeysockets/baileys';
+import type { ConnectionState, WAMessage } from '@whiskeysockets/baileys';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { ChatbotService } from '../src/services/chatbot.service.js';
 import type { MessageService } from '../src/services/message.service.js';
 import type { OperationalEventService } from '../src/services/operational-event.service.js';
@@ -10,11 +12,25 @@ import {
 
 type SessionHarness = {
   handleConnectionUpdate(update: Partial<ConnectionState>): Promise<void>;
+  status: 'connecting' | 'connected' | 'disconnected';
+  operationalState:
+    | 'starting'
+    | 'connecting'
+    | 'qr_required'
+    | 'connected'
+    | 'reconnecting'
+    | 'paused'
+    | 'logged_out'
+    | 'bad_session'
+    | 'disconnected'
+    | 'shutting_down';
+  connectedSince: string | null;
   socket: {
     ev: { removeAllListeners(event: string): void };
     ws: { close(): Promise<void> };
   } | null;
   startSocket(): Promise<void>;
+  processIncomingMessage(message: WAMessage): Promise<void>;
 };
 
 const createService = () => {
@@ -69,6 +85,125 @@ describe('WhatsApp rich session lifecycle', () => {
     expect(service.getPairingQr()).toBeNull();
   });
 
+  it('uses the active empty-input rule for a contact first message', async () => {
+    const chatbotService = {
+      evaluate: vi.fn(async () => ({
+        versionId: '3ca59c93-89f4-4c34-bb27-7d9e0887781b',
+        revision: 7,
+        normalizedInput: '',
+        matchedRule: {
+          id: 'ec53bfd2-a990-4e1a-866c-45145ee96c93',
+          triggerType: 'empty',
+          priority: 900,
+          matchedTrigger: null,
+          action: 'reply'
+        },
+        response: 'Sapaan aktif dari konfigurasi chatbot'
+      }))
+    } as unknown as ChatbotService;
+    const messageService = {
+      saveMessage: vi
+        .fn()
+        .mockResolvedValueOnce({ inserted: true, isFirstIncoming: true })
+        .mockResolvedValueOnce({ inserted: true, isFirstIncoming: false }),
+      applyChatbotEvaluation: vi.fn(async () => undefined)
+    } as unknown as MessageService;
+    const service = new WhatsAppService(chatbotService, messageService);
+    const sendText = vi.spyOn(service, 'sendText').mockResolvedValue({
+      key: { id: 'outgoing-message-id' }
+    } as WAMessage);
+    const remoteJid = '6281234567890@s.whatsapp.net';
+
+    await (service as unknown as SessionHarness).processIncomingMessage({
+      key: {
+        id: 'incoming-message-id',
+        remoteJid,
+        fromMe: false
+      },
+      message: { conversation: 'Halo' },
+      pushName: 'Rina'
+    } as WAMessage);
+
+    expect(chatbotService.evaluate).toHaveBeenCalledWith('');
+    expect(sendText).toHaveBeenCalledWith(
+      remoteJid,
+      'Sapaan aktif dari konfigurasi chatbot'
+    );
+    expect(messageService.saveMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        direction: 'outgoing',
+        content: 'Sapaan aktif dari konfigurasi chatbot'
+      })
+    );
+  });
+
+  it('fences sends before waiting for an active socket to close during credential reset', async () => {
+    const { service, harness } = createService();
+    let finishClose!: () => void;
+    const pendingClose = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    const close = vi.fn(() => pendingClose);
+    harness.status = 'connected';
+    harness.operationalState = 'connected';
+    harness.connectedSince = '2026-07-30T03:00:00.000Z';
+    harness.socket = {
+      ev: { removeAllListeners: vi.fn() },
+      ws: { close }
+    };
+    vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fs, 'lstat').mockResolvedValue({
+      isSymbolicLink: () => false
+    } as Awaited<ReturnType<typeof fs.lstat>>);
+    vi.spyOn(fs, 'readdir').mockResolvedValue([]);
+    const startSocket = vi
+      .spyOn(harness, 'startSocket')
+      .mockResolvedValue(undefined);
+
+    const reset = service.resetCredentials();
+
+    expect(service.getOperationalStatus()).toMatchObject({
+      state: 'connecting',
+      connectedSince: null
+    });
+    await expect(
+      service.sendText('6281234567890@s.whatsapp.net', 'test')
+    ).rejects.toThrow('WhatsApp is not connected');
+    expect(startSocket).not.toHaveBeenCalled();
+
+    finishClose();
+    await reset;
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(startSocket).toHaveBeenCalledOnce();
+  });
+
+  it('removes WhatsApp credentials without deleting persisted anti-ban state', async () => {
+    const { service, harness } = createService();
+    harness.status = 'connected';
+    harness.operationalState = 'connected';
+    harness.connectedSince = '2026-07-30T03:00:00.000Z';
+    vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fs, 'lstat').mockResolvedValue({
+      isSymbolicLink: () => false
+    } as Awaited<ReturnType<typeof fs.lstat>>);
+    vi.spyOn(fs, 'readdir').mockResolvedValue([
+      'creds.json',
+      'session-1.json',
+      'antiban-state.json'
+    ] as never);
+    const remove = vi.spyOn(fs, 'rm').mockResolvedValue(undefined);
+    vi.spyOn(harness, 'startSocket').mockResolvedValue(undefined);
+
+    await service.resetCredentials();
+
+    const removedEntries = remove.mock.calls.map(([target]) =>
+      path.basename(String(target))
+    );
+    expect(removedEntries).toEqual(['creds.json', 'session-1.json']);
+    expect(removedEntries).not.toContain('antiban-state.json');
+  });
+
   it('starts a fresh pairing socket after a QR expires', async () => {
     vi.useFakeTimers();
     const { service, harness } = createService();
@@ -107,6 +242,44 @@ describe('WhatsApp rich session lifecycle', () => {
     expect(status.reconnect.attempt).toBe(1);
     expect(status.reconnect.eligible).toBe(true);
     expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('enters degraded reconnecting state when initial setup fails', async () => {
+    vi.useFakeTimers();
+    const { service, harness, operationalEvents } = createService();
+    const failure = new Error('provider unavailable');
+    vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
+    vi.spyOn(fs, 'stat').mockRejectedValue(new Error('no credentials'));
+    const startSocket = vi
+      .spyOn(harness, 'startSocket')
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined);
+
+    await expect(service.connect()).rejects.toThrow('provider unavailable');
+
+    expect(service.getOperationalStatus()).toMatchObject({
+      state: 'reconnecting',
+      lastDisconnect: {
+        reason: 'provider unavailable',
+        classification: 'unknown'
+      },
+      reconnect: {
+        attempt: 1,
+        eligible: true
+      }
+    });
+    expect(operationalEvents.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.initialization_failed',
+        severity: 'critical'
+      })
+    );
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(startSocket).toHaveBeenCalledTimes(2);
+
+    await service.disconnect();
   });
 
   it.each([

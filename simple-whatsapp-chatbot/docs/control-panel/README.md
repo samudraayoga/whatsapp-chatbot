@@ -7,6 +7,10 @@ Dokumen dalam folder ini dimulai pada Sprint 0 dan menjadi kontrak aktif control
 - `data-model.md`: rancangan outbox, audit, session, identity, dan handoff.
 - `threat-model.md`: aset, trust boundary, ancaman, dan kontrol minimum.
 
+Kontrak khusus fitur RAG baru berada di `../ai-chatbot/`. Fitur ini memakai
+namespace `/api/admin/v1/ai-chatbot` dan tidak menggantikan rule engine
+deterministik `/api/admin/v1/chatbot`.
+
 ## Status Sprint 6
 
 Identity, operations, dan read model berikut sudah diimplementasikan:
@@ -37,13 +41,16 @@ Identity, operations, dan read model berikut sudah diimplementasikan:
 - `POST /api/admin/v1/outbox/{outboxId}/cancel`
 - `POST /api/admin/v1/outbox/{outboxId}/retry`
 - `POST /api/admin/v1/outbox/{outboxId}/reconcile`
-- `GET /api/admin/v1/chatbot/versions`
-- `POST /api/admin/v1/chatbot/versions/drafts`
-- `GET /api/admin/v1/chatbot/versions/{versionId}`
-- `PUT /api/admin/v1/chatbot/versions/{versionId}/rules`
+- `GET /api/admin/v1/chatbot/config`
+- `PUT /api/admin/v1/chatbot/config`
 - `POST /api/admin/v1/chatbot/test`
-- `POST /api/admin/v1/chatbot/versions/{versionId}/publish`
-- `POST /api/admin/v1/chatbot/versions/{versionId}/rollback`
+- `GET /api/admin/v1/ai-chatbot/foundation` (Sprint 0, read-only)
+- `/api/admin/v1/ai-chatbot/integration*` dan `/prompts*` (Sprint 1)
+- `/api/admin/v1/ai-chatbot/categories*` dan `/knowledge*` (Sprint 2)
+- `/api/admin/v1/ai-chatbot/documents*`, `/knowledge/*/reindex`, dan
+  `/knowledge/search-test` (Sprint 3)
+- `/api/admin/v1/ai-chatbot/playground/test` dan
+  `/api/admin/v1/ai-chatbot/runtime/respond` (Sprint 4 Alpha; customer cutover off)
 - `GET /health/live`
 - `GET /health/ready`
 

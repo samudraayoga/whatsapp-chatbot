@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { AdminUser } from '../api/contracts';
-import { disconnectedOverview } from '../mocks/fixtures';
+import { disconnectedOverview, healthyOverview } from '../mocks/fixtures';
 import { setOverviewScenario } from '../mocks/scenario';
 import { server } from '../mocks/server';
 import { SessionPage } from './SessionPage';
@@ -80,6 +80,9 @@ describe('SessionPage', () => {
       await screen.findByRole('button', { name: 'Reconnect' })
     ).toBeDisabled();
     expect(screen.getByText('Session sudah connected')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reset kredensial lama' })
+    ).not.toBeInTheDocument();
   });
 
   it('lets an eligible operator request reconnect', async () => {
@@ -149,7 +152,7 @@ describe('SessionPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('lets an Admin reset rejected credentials and request a new QR', async () => {
+  it('lets an Admin directly reset rejected credentials and request a new QR', async () => {
     const user = userEvent.setup();
     const loggedOutSession = {
       ...disconnectedOverview.data.session,
@@ -167,7 +170,7 @@ describe('SessionPage', () => {
         disabledReason: 'auth_reset_required'
       }
     };
-    let resetBody: Record<string, unknown> | null = null;
+    let resetBody: string | null = null;
 
     server.use(
       http.get('*/api/admin/v1/session', () =>
@@ -180,7 +183,7 @@ describe('SessionPage', () => {
         })
       ),
       http.post('*/api/admin/v1/session/reset', async ({ request }) => {
-        resetBody = (await request.json()) as Record<string, unknown>;
+        resetBody = await request.text();
         return HttpResponse.json(
           {
             data: {
@@ -200,33 +203,95 @@ describe('SessionPage', () => {
 
     renderPage(admin);
     await user.click(
-      await screen.findByRole('button', { name: 'Reset & generate QR' })
+      await screen.findByRole('button', { name: 'Reset kredensial lama' })
     );
-    await user.type(
-      screen.getByLabelText('Alasan reset'),
-      'Credential ditolak WhatsApp'
-    );
-    await user.type(screen.getByLabelText('Password Admin'), 'admin123');
-    await user.type(
-      screen.getByLabelText('Ketik RESET_WHATSAPP_SESSION'),
-      'RESET_WHATSAPP_SESSION'
-    );
-    await user.click(
-      screen.getByRole('button', {
-        name: 'Reset credential & generate QR'
+
+    await waitFor(() => expect(resetBody).toBe(''));
+    expect(screen.queryByLabelText('Alasan reset')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Password Admin')).not.toBeInTheDocument();
+  });
+
+  it('directly resets an active credential and disables the red button while pending', async () => {
+    const user = userEvent.setup();
+    let resetBody: string | null = null;
+    let resetCompleted = false;
+    let sessionGetsAfterReset = 0;
+    let releaseReset!: () => void;
+    const resetGate = new Promise<void>((resolve) => {
+      releaseReset = resolve;
+    });
+    const connectingResponse = {
+      data: {
+        session: {
+          ...healthyOverview.data.session,
+          state: 'connecting' as const,
+          connectedSince: null,
+          reconnect: {
+            attempt: 0,
+            nextRetryAt: null,
+            eligible: false,
+            disabledReason: 'connection_in_progress'
+          },
+          credentialUpdatedAt: null
+        },
+        readiness: {
+          ...healthyOverview.data.readiness,
+          readyToSend: false,
+          blockers: ['whatsapp_connecting']
+        }
+      },
+      meta: healthyOverview.meta
+    };
+
+    server.use(
+      http.get('*/api/admin/v1/session', () => {
+        if (resetCompleted) {
+          sessionGetsAfterReset += 1;
+          return HttpResponse.json(connectingResponse);
+        }
+        return HttpResponse.json({
+          data: {
+            session: healthyOverview.data.session,
+            readiness: healthyOverview.data.readiness
+          },
+          meta: healthyOverview.meta
+        });
+      }),
+      http.post('*/api/admin/v1/session/reset', async ({ request }) => {
+        resetBody = await request.text();
+        await resetGate;
+        resetCompleted = true;
+        return HttpResponse.json(connectingResponse, { status: 202 });
       })
     );
 
-    await waitFor(() =>
-      expect(resetBody).toEqual({
-        reason: 'Credential ditolak WhatsApp',
-        currentPassword: 'admin123',
-        confirmation: 'RESET_WHATSAPP_SESSION'
-      })
-    );
+    setOverviewScenario('healthy');
+    renderPage(admin);
+
+    const resetButton = await screen.findByRole('button', {
+      name: 'Reset kredensial lama'
+    });
+    expect(resetButton).toHaveClass('button--danger');
+    await user.click(resetButton);
+
+    const pendingButton = await screen.findByRole('button', {
+      name: 'Mereset kredensial…'
+    });
+    expect(pendingButton).toBeDisabled();
+    await waitFor(() => expect(resetBody).toBe(''));
+    expect(screen.queryByLabelText('Alasan reset')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Password Admin')).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: 'Reset dan buat QR baru' })
+      screen.queryByLabelText('Ketik RESET_WHATSAPP_SESSION')
     ).not.toBeInTheDocument();
+
+    releaseReset();
+    await waitFor(() => {
+      expect(sessionGetsAfterReset).toBeGreaterThan(0);
+      expect(
+        screen.queryByRole('button', { name: 'Reset kredensial lama' })
+      ).not.toBeInTheDocument();
+    });
   });
 
   it('requires confirmation before applying emergency pause', async () => {

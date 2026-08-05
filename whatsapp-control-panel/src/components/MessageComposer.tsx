@@ -57,13 +57,13 @@ export const MessageComposer = ({
     scheduledAt
   });
   const disabledReason = !canSend
-    ? 'Akun ini tidak memiliki permission messages.send.'
+    ? 'Akun ini tidak memiliki izin untuk mengirim pesan.'
     : !ready
       ? `Pengiriman belum aman: ${blockers.join(', ')}.`
       : !recipient.contactId && !recipient.phone
-        ? 'Pilih recipient terlebih dahulu.'
+        ? 'Pilih penerima terlebih dahulu.'
         : !normalizedText
-          ? 'Tulis pesan sebelum submit.'
+          ? 'Tulis isi pesan terlebih dahulu.'
           : normalizedText.length > 4096
             ? 'Pesan melewati batas 4.096 karakter.'
             : null;
@@ -90,14 +90,14 @@ export const MessageComposer = ({
     >
       <div className="message-composer__heading">
         <div>
-          <strong>Safe compose</strong>
+          <strong>Pesan WhatsApp</strong>
           <span>Ke {recipientLabel}</span>
         </div>
         <span
           className="compose-readiness"
           data-ready={ready && canSend}
         >
-          {ready && canSend ? 'Ready to queue' : 'Blocked'}
+          {ready && canSend ? 'Siap dikirim' : 'Belum siap'}
         </span>
       </div>
 
@@ -115,7 +115,7 @@ export const MessageComposer = ({
 
       <div className="message-composer__options">
         <label>
-          Priority
+          Prioritas
           <select
             value={priority}
             onChange={(event) =>
@@ -123,12 +123,12 @@ export const MessageComposer = ({
             }
           >
             <option value="normal">Normal</option>
-            {user.role === 'admin' && <option value="high">High</option>}
-            <option value="low">Low</option>
+            {user.role === 'admin' && <option value="high">Tinggi</option>}
+            <option value="low">Rendah</option>
           </select>
         </label>
         <label>
-          Schedule (opsional)
+          Jadwalkan (opsional)
           <input
             min={minimumSchedule}
             type="datetime-local"
@@ -159,10 +159,10 @@ export const MessageComposer = ({
           type="submit"
         >
           {mutation.isPending
-            ? 'Menerima command…'
+            ? 'Menyiapkan pesan…'
             : scheduledAt
               ? 'Jadwalkan'
-              : 'Masukkan ke outbox'}
+              : 'Masukkan ke antrean'}
         </button>
       </div>
     </form>

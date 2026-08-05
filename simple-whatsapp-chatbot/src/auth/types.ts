@@ -1,5 +1,11 @@
 import type { AdminRole, Permission } from './permissions.js';
 
+export type BootstrapAdminConfig = {
+  username: string;
+  password: string;
+  displayName: string;
+};
+
 export type AdminIdentity = {
   id: string;
   username: string;

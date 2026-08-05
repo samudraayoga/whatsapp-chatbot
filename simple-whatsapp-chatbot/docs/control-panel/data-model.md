@@ -276,8 +276,10 @@ WhatsApp send terjadi setelah commit. Jika provider mungkin menerima tetapi pers
 
 ## `chatbot_rule_versions`
 
-Satu row merepresentasikan snapshot konfigurasi. Hanya satu row boleh memiliki
-status `published`; rules milik version published/archived immutable.
+Schema version lama dipertahankan agar rollout tidak membutuhkan migrasi
+destruktif. Aplikasi hanya memakai satu row berstatus `published` sebagai
+konfigurasi aktif yang mutable. Row draft/archived lama tidak lagi diekspos dan
+tidak ikut evaluasi runtime.
 
 | Column | Type |
 |---|---|
@@ -295,9 +297,10 @@ status `published`; rules milik version published/archived immutable.
 | `updated_at` | TIMESTAMPTZ |
 | `published_at` | TIMESTAMPTZ nullable |
 
-`revision` dipakai untuk optimistic concurrency ketika menyimpan draft.
-`expectedActiveVersionId` dan advisory transaction lock mencegah dua publish
-bersamaan menimpa keputusan Admin lain.
+`revision` dipakai untuk optimistic concurrency saat `PUT chatbot/config`.
+Service mengunci row published, memeriksa `expectedRevision`, mengganti seluruh
+rule, lalu menaikkan revision/hash/timestamp dalam satu transaction. Revision
+stale menghasilkan `409 CHATBOT_CONFIG_CONFLICT` tanpa mengubah rule.
 
 ## `chatbot_rules`
 
@@ -319,5 +322,6 @@ empty rule aktif, satu fallback aktif, trigger normalized unik, dan response
 1–4.096 karakter.
 
 Incoming dan outgoing message dari runtime chatbot menyimpan
-`chatbotVersionId` dan `chatbotRuleId` di `messages.metadata`. Dengan begitu
-response production dapat ditelusuri ke snapshot rule yang aktif saat evaluasi.
+`chatbotVersionId`, `chatbotRevision`, dan `chatbotRuleId` di
+`messages.metadata`. Isi outgoing message tetap menjadi bukti respons yang
+benar-benar dikirim; revision menghubungkannya dengan audit perubahan config.

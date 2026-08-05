@@ -2,6 +2,7 @@ import { useOverviewQuery } from '../api/queries';
 import { MetricCard } from '../components/MetricCard';
 import { StatusBadge, type StatusTone } from '../components/StatusBadge';
 import type { AdminUser } from '../api/contracts';
+import { navigate } from '../routing/navigation';
 
 const stateTone = (state: string): StatusTone => {
   if (state === 'connected' || state === 'low') return 'success';
@@ -21,6 +22,49 @@ const stateTone = (state: string): StatusTone => {
 
 const formatPercent = (used: number, limit: number): number =>
   Math.min(100, Math.round((used / limit) * 100));
+
+const sessionLabel: Record<string, string> = {
+  starting: 'Memulai',
+  connecting: 'Menghubungkan',
+  qr_required: 'Perlu scan QR',
+  connected: 'Terhubung',
+  reconnecting: 'Menghubungkan ulang',
+  paused: 'Dijeda',
+  logged_out: 'Keluar',
+  bad_session: 'Sesi bermasalah',
+  disconnected: 'Terputus',
+  shutting_down: 'Menghentikan layanan'
+};
+
+const capabilityLabel = (value: string) =>
+  value === 'enabled'
+    ? 'Aktif'
+    : value === 'not_configured'
+      ? 'Belum tersedia'
+      : value.replaceAll('_', ' ');
+
+const rateWindowLabel: Record<string, string> = {
+  minute: 'Menit',
+  hour: 'Jam',
+  day: 'Hari'
+};
+
+const riskLabel: Record<string, string> = {
+  low: 'rendah',
+  medium: 'sedang',
+  high: 'tinggi',
+  critical: 'kritis'
+};
+
+const readinessLabels: Record<string, string> = {
+  connected: 'Terhubung',
+  available: 'Tersedia',
+  unavailable: 'Tidak tersedia',
+  degraded: 'Terganggu'
+};
+
+const readinessLabel = (value: string) =>
+  readinessLabels[value] ?? value.replaceAll('_', ' ');
 
 type OverviewPageProps = {
   user?: AdminUser;
@@ -63,64 +107,73 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
       {!data.readiness.readyToSend && (
         <section className="incident-banner" role="alert">
           <div>
-            <p className="eyebrow">Sending blocked</p>
-            <strong>Session belum siap mengirim pesan</strong>
+            <p className="eyebrow">Perlu perhatian</p>
+            <strong>Pengiriman pesan sedang tertahan</strong>
           </div>
-          <p>{data.readiness.blockers.join(', ').replaceAll('_', ' ')}</p>
+          <p>
+            Periksa koneksi dan keamanan pengiriman sebelum mencoba kembali.{' '}
+            <span className="technical-id">
+              {data.readiness.blockers.join(', ').replaceAll('_', ' ')}
+            </span>
+          </p>
         </section>
       )}
 
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Operations / Overview</p>
+          <p className="eyebrow">Ringkasan operasional</p>
           <h1>Halo, {user?.displayName ?? 'Admin'}.</h1>
-          <p>Ini kondisi sistem WhatsApp Anda saat ini.</p>
+          <p>Pantau koneksi, keamanan, dan antrean pesan dari satu tempat.</p>
         </div>
         <div className="page-heading__actions">
-          <button className="button button--primary" disabled type="button">
-            Compose message
+          <button
+            className="button button--primary"
+            onClick={() => navigate('/messages/compose')}
+            type="button"
+          >
+            Tulis pesan
           </button>
         </div>
       </header>
 
       <section className="metric-grid" aria-label="Ringkasan operasional">
         <MetricCard
-          eyebrow="WhatsApp session"
-          title={data.session.state.replaceAll('_', ' ')}
+          eyebrow="Koneksi WhatsApp"
+          title={sessionLabel[data.session.state] ?? data.session.state.replaceAll('_', ' ')}
           description={
             data.readiness.readyToSend
-              ? 'Session dan safety policy siap menerima pengiriman.'
-              : 'Pengiriman ditahan sampai seluruh blocker selesai.'
+              ? 'WhatsApp terhubung dan siap menerima pesan baru.'
+              : 'Selesaikan kendala koneksi atau keamanan sebelum mengirim.'
           }
           badge={
             <StatusBadge tone={stateTone(data.session.state)}>
-              {data.readiness.readyToSend ? 'Send ready' : 'Not ready'}
+              {data.readiness.readyToSend ? 'Siap mengirim' : 'Belum siap'}
             </StatusBadge>
           }
         >
           <dl className="metric-list">
             <div>
               <dt>Database</dt>
-              <dd>{data.readiness.database}</dd>
+              <dd>{readinessLabel(data.readiness.database)}</dd>
             </div>
             <div>
-              <dt>Event stream</dt>
-              <dd>{data.readiness.eventStream}</dd>
+              <dt>Pembaruan status</dt>
+              <dd>{readinessLabel(data.readiness.eventStream)}</dd>
             </div>
           </dl>
         </MetricCard>
 
         <MetricCard
-          eyebrow="Safety health"
+          eyebrow="Keamanan pengiriman"
           title={
             data.safety.score === null
-              ? 'Not available'
+              ? 'Belum tersedia'
               : `${data.safety.score}/100`
           }
           description={data.safety.recommendation}
           badge={
             <StatusBadge tone={stateTone(data.safety.risk)}>
-              {data.safety.risk} risk
+              Risiko {riskLabel[data.safety.risk] ?? data.safety.risk}
             </StatusBadge>
           }
         >
@@ -128,27 +181,27 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
         </MetricCard>
 
         <MetricCard
-          eyebrow="Outbox"
-          title={data.outbox ? `${data.outbox.queued} queued` : 'Not configured'}
+          eyebrow="Antrean pengiriman"
+          title={data.outbox ? `${data.outbox.queued} menunggu` : 'Belum tersedia'}
           description={
             data.outbox
-              ? 'Pesan belum dikirim dan tetap berada pada durable outbox.'
-              : 'Durable outbox belum tersedia pada backend saat ini.'
+              ? 'Pesan yang menunggu, dijadwalkan, atau sedang dicoba kembali.'
+              : 'Antrean pengiriman belum tersedia saat ini.'
           }
           badge={
             <StatusBadge tone={data.outbox?.failed ? 'danger' : 'neutral'}>
-              {data.capabilities.outbox.replaceAll('_', ' ')}
+              {capabilityLabel(data.capabilities.outbox)}
             </StatusBadge>
           }
         >
           {data.outbox && (
             <dl className="metric-list">
               <div>
-                <dt>Retrying</dt>
+                <dt>Dicoba kembali</dt>
                 <dd>{data.outbox.retrying}</dd>
               </div>
               <div>
-                <dt>Oldest age</dt>
+                <dt>Antrean terlama</dt>
                 <dd>{Math.round(data.outbox.oldestAgeMs / 1_000)}s</dd>
               </div>
             </dl>
@@ -156,27 +209,27 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
         </MetricCard>
 
         <MetricCard
-          eyebrow="Human follow-up"
-          title={data.followUp ? `${data.followUp.open} open` : 'Not configured'}
+          eyebrow="Tindak lanjut admin"
+          title={data.followUp ? `${data.followUp.open} terbuka` : 'Belum tersedia'}
           description={
             data.followUp
-              ? 'Permintaan menu 5 yang memerlukan tindak lanjut operator.'
-              : 'Workflow human follow-up belum tersedia pada backend saat ini.'
+              ? 'Percakapan yang membutuhkan bantuan langsung dari admin.'
+              : 'Tindak lanjut admin belum tersedia saat ini.'
           }
           badge={
             <StatusBadge tone={data.followUp?.overdue ? 'warning' : 'neutral'}>
-              {data.capabilities.followUp.replaceAll('_', ' ')}
+              {capabilityLabel(data.capabilities.followUp)}
             </StatusBadge>
           }
         >
           {data.followUp && (
             <dl className="metric-list">
               <div>
-                <dt>Unassigned</dt>
+                <dt>Belum ditangani</dt>
                 <dd>{data.followUp.unassigned}</dd>
               </div>
               <div>
-                <dt>Assigned</dt>
+                <dt>Sedang ditangani</dt>
                 <dd>{data.followUp.open - data.followUp.unassigned}</dd>
               </div>
             </dl>
@@ -187,13 +240,13 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
       <section className="panel">
         <div className="panel__heading">
           <div>
-            <p className="eyebrow">Rate utilization</p>
-            <h2>Conservative safety budget</h2>
+            <p className="eyebrow">Batas pengiriman</p>
+            <h2>Pemakaian batas aman</h2>
           </div>
           <StatusBadge tone={data.warmup ? 'success' : 'neutral'}>
             {data.warmup
-              ? `Warm-up day ${data.warmup.day}/${data.warmup.totalDays}`
-              : 'Safety unavailable'}
+              ? `Masa pemanasan hari ${data.warmup.day}/${data.warmup.totalDays}`
+              : 'Data keamanan belum tersedia'}
           </StatusBadge>
         </div>
 
@@ -203,8 +256,8 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
               return (
                 <div className="rate-item" key={window}>
                   <div>
-                    <span>{window}</span>
-                    <strong>Not available</strong>
+                    <span>{rateWindowLabel[window] ?? window}</span>
+                    <strong>Belum tersedia</strong>
                   </div>
                   <div className="progress progress--unknown" aria-hidden="true" />
                 </div>
@@ -214,7 +267,7 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
             return (
               <div className="rate-item" key={window}>
                 <div>
-                  <span>{window}</span>
+                  <span>{rateWindowLabel[window] ?? window}</span>
                   <strong>
                     {rate.used} / {rate.limit}
                   </strong>
@@ -238,11 +291,11 @@ export const OverviewPage = ({ user }: OverviewPageProps) => {
       <section className="panel events-panel">
         <div className="panel__heading">
           <div>
-            <p className="eyebrow">Operational timeline</p>
-            <h2>Recent events</h2>
+            <p className="eyebrow">Aktivitas sistem</p>
+            <h2>Kejadian terbaru</h2>
           </div>
           <StatusBadge tone={data.capabilities.eventStream === 'enabled' ? 'success' : 'neutral'}>
-            {data.capabilities.eventStream.replaceAll('_', ' ')}
+            {capabilityLabel(data.capabilities.eventStream)}
           </StatusBadge>
         </div>
         {data.recentEvents.length > 0 ? (

@@ -29,9 +29,9 @@ npm run check
 
 Sprint 2 menyediakan rich session page, QR pairing dengan countdown, live SSE
 update dengan fallback polling 10 detik, guarded reconnect, emergency pause,
-dan reset/re-pair credential khusus Admin. Reset memerlukan CSRF, permission
-`session.reset`, password saat ini, alasan, serta typed confirmation sebelum
-backend menghapus credential WhatsApp dan membuat QR baru.
+dan reset/re-pair credential satu klik khusus Admin. Reset memerlukan CSRF dan
+permission `session.reset`, lalu backend menghapus credential WhatsApp, mencatat
+aksi tersebut ke audit log, dan membuat QR baru tanpa form atau request body.
 
 Sprint 3 menyediakan:
 
@@ -59,12 +59,13 @@ bukan berarti WhatsApp sudah menerima pesan.
 
 Sprint 5 menyediakan:
 
-- Version history dan rule editor di `/chatbot/rules`, khusus permission
+- Editor konfigurasi aktif tunggal di `/chatbot/rules`, khusus permission
   `chatbot.manage`.
-- Draft copy dari active version; version published/archived tidak dapat diedit.
 - Validasi trigger, unique priority, empty rule, fallback, response, dan action.
-- Dry-run exact-normalized tanpa mengirim pesan WhatsApp.
-- Guarded publish dan rollback dengan summary/reason serta phrase confirmation.
+- Preview memakai perubahan lokal tanpa mengirim pesan WhatsApp atau menyimpannya.
+- Alur langsung `edit → test → simpan & aktifkan` tanpa draft, version history,
+  publish, atau rollback.
+- Update memakai revision check tersembunyi agar dua tab tidak saling menimpa.
 - Contract test memakai fixture terisolasi; workflow runtime selalu memakai backend.
 
 Sprint 6 menyediakan:

@@ -1,6 +1,5 @@
 import {
   useDeferredValue,
-  useEffect,
   useMemo,
   useState
 } from 'react';
@@ -178,7 +177,10 @@ const FollowUpQueue = ({ user }: { user: AdminUser }) => {
   });
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ['handoffs'] });
-  const claim = useMutation({ mutationFn: claimHandoff, onSuccess: refresh });
+  const claim = useMutation({
+    mutationFn: (handoffId: string) => claimHandoff(handoffId),
+    onSuccess: refresh
+  });
   const resolve = useMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       resolveHandoff(id, note),
@@ -191,9 +193,9 @@ const FollowUpQueue = ({ user }: { user: AdminUser }) => {
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 3 · Human handoff</p>
-          <h1>Follow-up queue</h1>
-          <p>Permintaan menu 5 dibuat tepat satu kali dan dapat diklaim atau diselesaikan dengan audit.</p>
+          <p className="eyebrow">Percakapan</p>
+          <h1>Tindak lanjut</h1>
+          <p>Kelola percakapan yang membutuhkan bantuan admin.</p>
         </div>
         <div className="page-heading__actions">
           <button className="button" type="button" onClick={() => navigate('/inbox')}>
@@ -321,12 +323,6 @@ const ConversationInbox = ({
     [conversations.data]
   );
 
-  useEffect(() => {
-    if (pathname === '/inbox' && conversationItems[0]) {
-      navigate(`/inbox/${conversationItems[0].id}`, true);
-    }
-  }, [conversationItems, pathname]);
-
   const messages = useInfiniteQuery({
     queryKey: ['messages', routeId],
     queryFn: ({ pageParam }) =>
@@ -352,16 +348,16 @@ const ConversationInbox = ({
     <section>
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 3 · Search & history</p>
+          <p className="eyebrow">Percakapan</p>
           <h1>Inbox</h1>
-          <p>Cari percakapan, telusuri histori, dan periksa identitas tanpa membuka terminal.</p>
+          <p>Baca pesan masuk dan balas pelanggan dari satu tempat.</p>
         </div>
         <button className="button" type="button" onClick={() => navigate('/inbox/follow-ups')}>
-          Follow-up queue
+          Tindak lanjut
         </button>
       </header>
 
-      <div className="inbox-layout">
+      <div className="inbox-layout" data-view={routeId ? 'detail' : 'list'}>
         <aside className="conversation-pane" aria-label="Daftar percakapan">
           <div className="inbox-toolbar">
             <label>
@@ -396,6 +392,7 @@ const ConversationInbox = ({
             <div className="conversation-list">
               {conversationItems.map((conversation) => (
                 <button
+                  aria-pressed={conversation.id === routeId}
                   className="conversation-item"
                   data-active={conversation.id === routeId}
                   key={conversation.id}
@@ -457,9 +454,19 @@ const ConversationInbox = ({
           ) : (
             <>
               <header className="history-pane__header">
-                <div>
-                  <strong>{selected?.displayName ?? 'Histori percakapan'}</strong>
-                  <span>{selected?.maskedPhone ?? `Contact #${routeId}`}</span>
+                <div className="history-pane__identity">
+                  <button
+                    aria-label="Kembali ke daftar percakapan"
+                    className="mobile-back-button mobile-back-button--icon"
+                    onClick={() => navigate('/inbox')}
+                    type="button"
+                  >
+                    ←
+                  </button>
+                  <div>
+                    <strong>{selected?.displayName ?? 'Histori percakapan'}</strong>
+                    <span>{selected?.maskedPhone ?? `Contact #${routeId}`}</span>
+                  </div>
                 </div>
                 <span>{chronologicalMessages.length} pesan dimuat</span>
               </header>

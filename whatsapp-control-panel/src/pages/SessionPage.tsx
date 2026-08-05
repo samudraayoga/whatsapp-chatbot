@@ -107,13 +107,12 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
   const canReconnect = user.permissions.includes('session.reconnect');
   const canReset = user.permissions.includes('session.reset');
   const canPause = user.permissions.includes('safety.pause');
-  const [qrImage, setQrImage] = useState<string | null>(null);
+  const [qrImage, setQrImage] = useState<{
+    source: string;
+    dataUrl: string;
+  } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [confirmPause, setConfirmPause] = useState(false);
-  const [showCredentialReset, setShowCredentialReset] = useState(false);
-  const [resetReason, setResetReason] = useState('');
-  const [resetPassword, setResetPassword] = useState('');
-  const [resetConfirmation, setResetConfirmation] = useState('');
 
   const qrQuery = useQuery({
     queryKey: ['pairing-qr'],
@@ -135,12 +134,17 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
       width: 320,
       color: { dark: '#07110d', light: '#ffffff' }
     }).then((image) => {
-      if (active) setQrImage(image);
+      if (active) setQrImage({ source: rawQr, dataUrl: image });
     });
     return () => {
       active = false;
     };
   }, [qrQuery.data?.data.qr]);
+
+  const currentQrImage =
+    qrImage && qrImage.source === qrQuery.data?.data.qr
+      ? qrImage.dataUrl
+      : null;
 
   useEffect(() => {
     if (!qrQuery.data) return;
@@ -178,19 +182,10 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
     }
   });
   const resetMutation = useMutation({
-    mutationFn: () =>
-      resetWhatsAppSession({
-        reason: resetReason,
-        currentPassword: resetPassword,
-        confirmation: resetConfirmation
-      }),
+    mutationFn: resetWhatsAppSession,
     onSuccess: (result) => {
       queryClient.setQueryData(sessionQueryKey, result);
       void queryClient.removeQueries({ queryKey: ['pairing-qr'] });
-      setShowCredentialReset(false);
-      setResetReason('');
-      setResetPassword('');
-      setResetConfirmation('');
       refreshOperationalData();
     }
   });
@@ -226,6 +221,7 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
     session.state === 'disconnected' &&
     session.lastDisconnect?.classification === 'fatal';
   const credentialResetEligible =
+    session.state === 'connected' ||
     session.state === 'logged_out' ||
     session.state === 'bad_session' ||
     terminalDisconnect;
@@ -334,11 +330,11 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
 
           {session.state === 'qr_required' && canReconnect ? (
             <div className="qr-stage">
-              {qrImage && qrSecondsRemaining > 0 ? (
+              {currentQrImage && qrSecondsRemaining > 0 ? (
                 <img
                   alt="QR pairing WhatsApp yang aktif"
                   className="pairing-qr"
-                  src={qrImage}
+                  src={currentQrImage}
                 />
               ) : (
                 <div className="qr-waiting" aria-live="polite">
@@ -407,13 +403,16 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
                 )}
               </div>
             )}
-            {canReset && credentialResetEligible && !showCredentialReset && (
+            {canReset && credentialResetEligible && (
               <button
                 className="button button--danger"
+                disabled={resetMutation.isPending}
                 type="button"
-                onClick={() => setShowCredentialReset(true)}
+                onClick={() => resetMutation.mutate()}
               >
-                Reset & generate QR
+                {resetMutation.isPending
+                  ? 'Mereset kredensial…'
+                  : 'Reset kredensial lama'}
               </button>
             )}
             {canPause && session.state !== 'paused' && !confirmPause && (
@@ -452,71 +451,6 @@ export const SessionPage = ({ user, streamState }: SessionPageProps) => {
         </section>
       )}
 
-      {canReset && credentialResetEligible && showCredentialReset && (
-        <section className="panel credential-reset-panel" role="alert">
-          <div>
-            <p className="eyebrow">Admin credential recovery</p>
-            <h2>Reset dan buat QR baru</h2>
-            <p>
-              Credential WhatsApp lama akan dihapus. Database pesan, contacts,
-              rules, dan audit log tidak ikut dihapus.
-            </p>
-          </div>
-          <div className="credential-reset-form">
-            <label>
-              Alasan reset
-              <textarea
-                maxLength={500}
-                rows={2}
-                value={resetReason}
-                onChange={(event) => setResetReason(event.target.value)}
-              />
-            </label>
-            <label>
-              Password Admin
-              <input
-                autoComplete="current-password"
-                type="password"
-                value={resetPassword}
-                onChange={(event) => setResetPassword(event.target.value)}
-              />
-            </label>
-            <label>
-              Ketik RESET_WHATSAPP_SESSION
-              <input
-                autoComplete="off"
-                value={resetConfirmation}
-                onChange={(event) => setResetConfirmation(event.target.value)}
-              />
-            </label>
-            <div className="credential-reset-form__actions">
-              <button
-                className="button button--danger"
-                disabled={
-                  resetReason.trim().length < 5 ||
-                  !resetPassword ||
-                  resetConfirmation !== 'RESET_WHATSAPP_SESSION' ||
-                  resetMutation.isPending
-                }
-                type="button"
-                onClick={() => resetMutation.mutate()}
-              >
-                {resetMutation.isPending
-                  ? 'Mereset credential…'
-                  : 'Reset credential & generate QR'}
-              </button>
-              <button
-                className="button"
-                disabled={resetMutation.isPending}
-                type="button"
-                onClick={() => setShowCredentialReset(false)}
-              >
-                Batal
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
     </>
   );
 };
