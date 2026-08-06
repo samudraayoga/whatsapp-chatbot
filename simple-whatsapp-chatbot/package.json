@@ -24,6 +24,8 @@
     "test:watch": "vitest",
     "test:smoke:ai-documents": "tsx scripts/smoke-ai-documents.ts",
     "test:smoke:ai-rag": "tsx scripts/smoke-ai-rag.ts",
+    "test:smoke:ai-sprint7-performance": "tsx scripts/smoke-ai-sprint7-performance.ts",
+    "migrate:ai-credentials": "tsx scripts/migrate-ai-provider-credentials.ts",
     "check": "npm run typecheck && npm run typecheck:test && npm run test && npm run build"
   },
   "keywords": [

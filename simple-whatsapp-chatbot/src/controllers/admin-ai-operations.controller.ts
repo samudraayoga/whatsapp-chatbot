@@ -4,6 +4,8 @@ import { requireUuid } from '../services/ai-chatbot-validation.js';
 import {
   AiOperationsService,
   type FeedbackType,
+  releaseGateKeys,
+  type ReleaseGateKey,
   type TestCaseInput,
   type UnansweredStatus
 } from '../services/ai-operations.service.js';
@@ -44,6 +46,19 @@ const dateTime = (value: unknown, field: string): string | undefined => {
     throw new AppError(`${field} must be a valid date-time`, 400, 'AI_OPERATIONS_FILTER_INVALID');
   }
   return new Date(value).toISOString();
+};
+const boundedNumber = (value: unknown, field: string, minimum: number, maximum: number, nullable = false): number | null => {
+  if ((value === null || value === undefined || value === '') && nullable) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+    throw new AppError(`${field} is invalid`, 400, 'AI_OPERATIONS_INPUT_INVALID');
+  }
+  return parsed;
+};
+const boundedInteger = (value: unknown, field: string, minimum: number, maximum: number): number => {
+  const parsed = boundedNumber(value, field, minimum, maximum);
+  if (parsed === null || !Number.isInteger(parsed)) throw new AppError(`${field} must be an integer`, 400, 'AI_OPERATIONS_INPUT_INVALID');
+  return parsed;
 };
 const pagination = (request: Request) => {
   const limit = request.query.limit === undefined ? 20 : Number(request.query.limit);
@@ -253,6 +268,18 @@ export class AdminAiOperationsController {
       response.status(201).json({ data, meta: meta(request) });
     } catch (error) { next(error); }
   };
+  importTestCases = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!Array.isArray(request.body?.testCases) || request.body.testCases.length < 1 || request.body.testCases.length > 300) {
+        throw new AppError('testCases must contain 1 to 300 items', 400, 'AI_EVALUATION_IMPORT_INVALID');
+      }
+      const parsed = request.body.testCases.map(parseTestCase);
+      const data = await this.operations.importTestCases(request.tenantContext!.tenantId, request.adminAuth!.id, parsed);
+      await this.audit.record({ ...auditContext(request), action: 'ai.test_cases_imported',
+        resourceType: 'ai_test_case', resourceId: request.requestId, afterState: { imported: data.imported } });
+      response.status(201).json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
   updateTestCase = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     try {
       const data = await this.operations.updateTestCase(request.tenantContext!.tenantId,
@@ -278,6 +305,140 @@ export class AdminAiOperationsController {
         resourceType: 'ai_test_case_batch', resourceId: request.requestId,
         afterState: { total: data.total, passed: data.passed, failed: data.failed } });
       response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  analytics = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const now = new Date();
+      const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const from = dateTime(request.query.from, 'from') ?? defaultFrom;
+      const to = dateTime(request.query.to, 'to') ?? now.toISOString();
+      if (new Date(from) >= new Date(to) || new Date(to).getTime() - new Date(from).getTime() > 366 * 24 * 60 * 60 * 1000) {
+        throw new AppError('Analytics range must be positive and at most 366 days', 400, 'AI_ANALYTICS_RANGE_INVALID');
+      }
+      const data = await this.operations.getAnalytics(request.tenantContext!.tenantId, from, to);
+      response.setHeader('Cache-Control', 'private, max-age=30');
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  versionChanges = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try { response.json({ data: await this.operations.getVersionChanges(request.tenantContext!.tenantId), meta: meta(request) }); }
+    catch (error) { next(error); }
+  };
+
+  getOperationalSettings = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try { response.json({ data: await this.operations.getOperationalSettings(request.tenantContext!.tenantId), meta: meta(request) }); }
+    catch (error) { next(error); }
+  };
+
+  updateOperationalSettings = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const body = request.body ?? {};
+      const data = await this.operations.updateOperationalSettings(request.tenantContext!.tenantId, request.adminAuth!.id, {
+        logRetentionDays: boundedInteger(body.logRetentionDays, 'logRetentionDays', 1, 3650),
+        cacheTtlSeconds: boundedInteger(body.cacheTtlSeconds, 'cacheTtlSeconds', 60, 86400),
+        dailyBudgetUsd: boundedNumber(body.dailyBudgetUsd, 'dailyBudgetUsd', 0, 1_000_000, true),
+        chatInputCostPerMillionUsd: boundedNumber(body.chatInputCostPerMillionUsd, 'chatInputCostPerMillionUsd', 0, 10_000, true),
+        chatOutputCostPerMillionUsd: boundedNumber(body.chatOutputCostPerMillionUsd, 'chatOutputCostPerMillionUsd', 0, 10_000, true),
+        embeddingCostPerMillionUsd: boundedNumber(body.embeddingCostPerMillionUsd, 'embeddingCostPerMillionUsd', 0, 10_000, true),
+        fallbackAlertRate: boundedNumber(body.fallbackAlertRate, 'fallbackAlertRate', 0, 1)!,
+        latencyAlertMs: boundedInteger(body.latencyAlertMs, 'latencyAlertMs', 100, 120_000),
+        queueAlertDepth: boundedInteger(body.queueAlertDepth, 'queueAlertDepth', 1, 100_000),
+        expectedRevision: boundedInteger(body.expectedRevision, 'expectedRevision', 1, Number.MAX_SAFE_INTEGER)
+      });
+      await this.audit.record({ ...auditContext(request), action: 'ai.operational_settings_updated',
+        resourceType: 'ai_operational_settings', resourceId: request.tenantContext!.tenantId,
+        afterState: { revision: data.revision, logRetentionDays: data.logRetentionDays, cacheTtlSeconds: data.cacheTtlSeconds } });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  anonymizeConversation = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const id = requireUuid(request.params.conversationId ?? '', 'conversationId');
+      const data = await this.operations.anonymizeConversation(request.tenantContext!.tenantId, id, request.adminAuth!.id);
+      await this.audit.record({ ...auditContext(request), action: 'ai.conversation_anonymized',
+        resourceType: 'ai_conversation', resourceId: id, afterState: { anonymizedAt: data.anonymizedAt } });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  applyRetention = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await this.operations.applyRetention(request.tenantContext!.tenantId, request.adminAuth!.id);
+      await this.audit.record({ ...auditContext(request), action: 'ai.retention_applied',
+        resourceType: 'ai_conversation', resourceId: request.tenantContext!.tenantId, afterState: data });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  releaseReadiness = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try { response.setHeader('Cache-Control', 'no-store'); response.json({ data: await this.operations.getReleaseReadiness(request.tenantContext!.tenantId), meta: meta(request) }); }
+    catch (error) { next(error); }
+  };
+
+  generateEvaluationReport = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const data = await this.operations.generateEvaluationReport(request.tenantContext!.tenantId, request.adminAuth!.id);
+      await this.audit.record({ ...auditContext(request), action: 'ai.evaluation_report_generated',
+        resourceType: 'ai_evaluation_report', resourceId: data.id,
+        afterState: { datasetSize: data.datasetSize, gatePassed: data.gatePassed, criticalSafetyFailures: data.criticalSafetyFailures } });
+      response.status(201).json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  updateReleaseGate = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const key = request.params.gateKey as ReleaseGateKey;
+      if (!releaseGateKeys.includes(key)) throw new AppError('Release gate key is invalid', 400, 'AI_RELEASE_GATE_INVALID');
+      const status = request.body?.status;
+      if (!['pending', 'passed', 'failed'].includes(status)) throw new AppError('Release gate status is invalid', 400, 'AI_RELEASE_GATE_INVALID');
+      const data = await this.operations.updateReleaseGate(request.tenantContext!.tenantId, request.adminAuth!.id, key, {
+        status, evidence: text(request.body?.evidence, 'evidence', 2000)!,
+        expectedRevision: boundedInteger(request.body?.expectedRevision, 'expectedRevision', 1, Number.MAX_SAFE_INTEGER)
+      });
+      await this.audit.record({ ...auditContext(request), action: 'ai.release_gate_updated',
+        resourceType: 'ai_release_gate', resourceId: key, afterState: { status } });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  updatePilotConfiguration = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const channels = strings(request.body?.channels, 'channels', 10);
+      if (channels.some((channel) => !['whatsapp', 'internal'].includes(channel))) throw new AppError('Pilot channel is invalid', 400, 'AI_PILOT_CHANNEL_INVALID');
+      const data = await this.operations.updatePilotConfiguration(request.tenantContext!.tenantId, request.adminAuth!.id, {
+        percentage: boundedInteger(request.body?.percentage, 'percentage', 0, 100), channels,
+        note: text(request.body?.note, 'note', 2000)!,
+        expectedRevision: boundedInteger(request.body?.expectedRevision, 'expectedRevision', 1, Number.MAX_SAFE_INTEGER)
+      });
+      await this.audit.record({ ...auditContext(request), action: 'ai.pilot_configuration_updated',
+        resourceType: 'ai_release_readiness', resourceId: request.tenantContext!.tenantId,
+        afterState: { requestedPilotPercentage: data.requestedPilotPercentage, effectivePilotPercentage: data.effectivePilotPercentage } });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  emergencyPausePilot = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const reason = text(request.body?.reason, 'reason', 1000)!;
+      const data = await this.operations.emergencyPausePilot(request.tenantContext!.tenantId, request.adminAuth!.id, reason);
+      await this.audit.record({ ...auditContext(request), action: 'ai.pilot_emergency_paused',
+        resourceType: 'ai_release_readiness', resourceId: request.tenantContext!.tenantId,
+        afterState: { effectivePilotPercentage: 0, reason } });
+      response.json({ data, meta: meta(request) });
+    } catch (error) { next(error); }
+  };
+
+  pilotDailyReview = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    try {
+      const date = typeof request.query.date === 'string' ? request.query.date : new Date().toISOString().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) {
+        throw new AppError('date must be YYYY-MM-DD', 400, 'AI_PILOT_DATE_INVALID');
+      }
+      response.json({ data: await this.operations.getPilotDailyReview(request.tenantContext!.tenantId, date), meta: meta(request) });
     } catch (error) { next(error); }
   };
 }

@@ -91,19 +91,20 @@ describe('AI chatbot foundation contract', () => {
     ).toEqual(mockAiChatbotFoundation);
   });
 
-  it('rejects a contract that enables customer traffic in Sprint 5', () => {
-    expect(() =>
+  it('accepts a contract with controlled customer traffic enabled', () => {
+    expect(
       aiChatbotFoundationResponseSchema.parse({
         ...mockAiChatbotFoundation,
         data: {
           ...mockAiChatbotFoundation.data,
           runtime: {
             ...mockAiChatbotFoundation.data.runtime,
+            enabled: true,
             customerTraffic: 'enabled'
           }
         }
-      })
-    ).toThrow();
+      }).data.runtime.customerTraffic
+    ).toBe('enabled');
   });
 
   it('rejects duplicate modules and a mismatched module path', () => {
@@ -193,8 +194,8 @@ describe('AI integration contract', () => {
     expect(JSON.stringify(mockAiIntegration)).not.toContain('secretReference:');
   });
 
-  it('rejects any effective customer activation', () => {
-    expect(() =>
+  it('accepts an effectively enabled customer integration', () => {
+    expect(
       aiIntegrationResponseSchema.parse({
         ...mockAiIntegration,
         data: {
@@ -204,7 +205,7 @@ describe('AI integration contract', () => {
             effectiveEnabled: true
           }
         }
-      })
-    ).toThrow();
+      }).data.integration.effectiveEnabled
+    ).toBe(true);
   });
 });

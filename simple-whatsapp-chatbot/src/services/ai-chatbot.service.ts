@@ -11,6 +11,7 @@ import {
   AiProviderRegistry,
   type ProviderConnectionState
 } from './ai-provider.service.js';
+import { AiCredentialCipher } from './ai-credential-cipher.service.js';
 
 type TransactionClient = QueryExecutor & { release(): void };
 type TransactionalExecutor = QueryExecutor & {
@@ -97,7 +98,7 @@ export type AiIntegration = {
   embeddingDimensions: number | null;
   secretReferenceConfigured: boolean;
   active: boolean;
-  effectiveEnabled: false;
+  effectiveEnabled: boolean;
   strictGrounding: true;
   maxResponseTokens: number;
   temperature: number;
@@ -130,7 +131,7 @@ export type AiPrompt = {
 };
 
 export type AiReadiness = {
-  effectiveEnabled: false;
+  effectiveEnabled: boolean;
   blockers: Array<{ code: string; message: string }>;
   dependencies: AiDependencySnapshot;
   publishedPromptConfigured: boolean;
@@ -144,6 +145,7 @@ export type UpdateAiIntegrationInput = {
   embeddingProvider: string;
   embeddingModel: string;
   embeddingDimensions: number | null;
+  apiKey?: string | null;
   secretReference?: string | null;
   strictGrounding: true;
   maxResponseTokens: number;
@@ -200,7 +202,7 @@ const toIntegration = (row: IntegrationRow): AiIntegration => ({
   embeddingDimensions: row.embedding_dimensions,
   secretReferenceConfigured: Boolean(row.secret_ref),
   active: row.is_active,
-  effectiveEnabled: false,
+  effectiveEnabled: row.is_active,
   strictGrounding: true,
   maxResponseTokens: row.max_response_tokens,
   temperature: Number(row.temperature),
@@ -242,7 +244,8 @@ export class AiChatbotService {
   constructor(
     private readonly database: QueryExecutor = pool,
     private readonly providers = new AiProviderRegistry(),
-    private readonly probes = new AiDependencyProbeService(database, providers)
+    private readonly probes = new AiDependencyProbeService(database, providers),
+    private readonly credentialCipher = new AiCredentialCipher()
   ) {}
 
   private async transaction<T>(
@@ -318,10 +321,17 @@ export class AiChatbotService {
     input: UpdateAiIntegrationInput
   ): Promise<{ before: AiIntegration; after: AiIntegration }> {
     const before = toIntegration(await this.integrationRow(tenantId));
-    const changesSecret = Object.prototype.hasOwnProperty.call(
+    const changesApiKey = Object.prototype.hasOwnProperty.call(input, 'apiKey');
+    const changesSecretReference = Object.prototype.hasOwnProperty.call(
       input,
       'secretReference'
     );
+    const changesSecret = changesApiKey || changesSecretReference;
+    const storedSecret = changesApiKey
+      ? input.apiKey === null
+        ? null
+        : this.credentialCipher.seal(input.apiKey!)
+      : input.secretReference ?? null;
     const result = await this.database.query<IntegrationRow>(
       `
         UPDATE ai_integrations
@@ -357,7 +367,7 @@ export class AiChatbotService {
         input.embeddingModel,
         input.embeddingDimensions,
         changesSecret,
-        input.secretReference ?? null,
+        storedSecret,
         input.maxResponseTokens,
         input.temperature,
         input.timeoutMs,
@@ -418,28 +428,28 @@ export class AiChatbotService {
       secretReference: integration.secret_ref,
       timeoutMs: integration.timeout_ms
     });
-    const promptResult = await this.database.query<{ configured: boolean }>(
+    const promptResult = await this.database.query<{
+      configured: boolean;
+      active_knowledge: boolean;
+    }>(
       `
-        SELECT EXISTS (
-          SELECT 1 FROM ai_prompt_versions
-          WHERE tenant_id = $1::uuid AND status = 'published'
-        ) AS configured;
+        SELECT
+          EXISTS (
+            SELECT 1 FROM ai_prompt_versions
+            WHERE tenant_id = $1::uuid AND status = 'published'
+          ) AS configured,
+          EXISTS (
+            SELECT 1 FROM knowledge_chunks
+            WHERE tenant_id = $1::uuid AND status = 'active'
+          ) AS active_knowledge;
       `,
       [tenantId]
     );
     const publishedPromptConfigured = Boolean(promptResult.rows[0]?.configured);
-    const blockers: AiReadiness['blockers'] = [
-      {
-        code: 'GLOBAL_RUNTIME_HARD_OFF',
-        message: 'Customer AI traffic is intentionally unavailable before safety, evaluation, and release gates are approved.'
-      }
-    ];
-    if (!integration.is_active) {
-      blockers.push({
-        code: 'TENANT_INTEGRATION_INACTIVE',
-        message: 'The tenant integration has not been activated.'
-      });
-    }
+    const activeKnowledgeConfigured = Boolean(
+      promptResult.rows[0]?.active_knowledge
+    );
+    const blockers: AiReadiness['blockers'] = [];
     if (
       !integration.provider ||
       !integration.chat_model ||
@@ -459,6 +469,12 @@ export class AiChatbotService {
         message: 'An approved and published AI instruction is required.'
       });
     }
+    if (!activeKnowledgeConfigured) {
+      blockers.push({
+        code: 'ACTIVE_KNOWLEDGE_MISSING',
+        message: 'At least one active Knowledge Base chunk is required.'
+      });
+    }
     for (const [dependency, state] of Object.entries(dependencies)) {
       if (dependency === 'checkedAt' || state === 'reachable') continue;
       blockers.push({
@@ -467,30 +483,54 @@ export class AiChatbotService {
       });
     }
     return {
-      effectiveEnabled: false,
+      effectiveEnabled: integration.is_active && blockers.length === 0,
       blockers,
       dependencies,
       publishedPromptConfigured
     };
   }
 
-  async activate(tenantId: string, expectedRevision: number): Promise<never> {
-    const integration = await this.getIntegration(tenantId);
-    if (integration.revision !== expectedRevision) {
+  async activate(
+    tenantId: string,
+    expectedRevision: number
+  ): Promise<{ before: AiIntegration; after: AiIntegration }> {
+    const before = await this.getIntegration(tenantId);
+    if (before.revision !== expectedRevision) {
       throw new AppError(
         'AI integration revision is stale',
         409,
         'AI_INTEGRATION_REVISION_CONFLICT',
-        { expectedRevision, actualRevision: integration.revision }
+        { expectedRevision, actualRevision: before.revision }
       );
     }
     const readiness = await this.getReadiness(tenantId);
-    throw new AppError(
-      'AI activation remains blocked until safety, evaluation, and customer release gates are approved',
-      409,
-      'AI_ACTIVATION_BLOCKED',
-      { blockers: readiness.blockers }
+    if (readiness.blockers.length > 0) {
+      throw new AppError(
+        'AI activation is blocked until the required runtime checks pass',
+        409,
+        'AI_ACTIVATION_BLOCKED',
+        { blockers: readiness.blockers }
+      );
+    }
+    if (before.active) return { before, after: before };
+    const result = await this.database.query<IntegrationRow>(
+      `
+        UPDATE ai_integrations
+        SET is_active = TRUE, revision = revision + 1, updated_at = NOW()
+        WHERE tenant_id = $1::uuid AND revision = $2 AND is_active = FALSE
+        RETURNING *;
+      `,
+      [tenantId, expectedRevision]
     );
+    if (!result.rows[0]) {
+      throw new AppError(
+        'AI integration revision is stale',
+        409,
+        'AI_INTEGRATION_REVISION_CONFLICT',
+        { expectedRevision, actualRevision: before.revision }
+      );
+    }
+    return { before, after: toIntegration(result.rows[0]) };
   }
 
   async deactivate(

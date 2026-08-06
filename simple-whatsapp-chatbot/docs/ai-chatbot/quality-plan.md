@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-This is the Sprint 6 master test plan and requirement traceability matrix.
+This is the Sprint 8 master test plan and requirement traceability matrix.
 Tenant/settings/prompt and knowledge-governance tests, deterministic provider
 mocks, document processing/vector-search smoke, live dependency probes, and UI
 contract suites are implemented; retrieval evaluation data and customer runtime
@@ -17,11 +17,11 @@ Quality is evaluated at three distinct layers:
 
 A green unit-test suite alone is not a production release gate for AI.
 
-## Baseline verified after Sprint 6 implementation
+## Baseline verified through Sprint 8 implementation
 
 | Area | Command/result | Status |
 |---|---|---|
-| Backend tests | `npm run check` — 26 files, 267 tests | Passed |
+| Backend tests | `npm run check` — 26 files, 273 tests | Passed |
 | Backend type/build | typecheck, test-typecheck, `npm run build` | Passed |
 | Frontend check | lint, typecheck, 13 files/78 tests, Vite build | Passed |
 | Local AI infrastructure | pgvector extension, Redis/MinIO health, idempotent bucket bootstrap | Passed |
@@ -29,14 +29,18 @@ A green unit-test suite alone is not a production release gate for AI.
 | Sprint 4 live smoke | grounded answer/source/trace/token/latency, idempotent replay, no-context short circuit | Passed |
 | Sprint 5 live smoke | disclaimer, memory/isolation, emergency/medical/injection/admin/interest, idempotent handoff | Passed |
 | Sprint 6 live smoke | logs/source trace, feedback, unanswered aggregation, draft FAQ, test-case scoring/batch/comparison | Passed |
+| Sprint 7 live smoke | version-aware cache, analytics/cost/trends, diff, anonymization | Passed |
+| Analytics performance recheck | 30 concurrent aggregation requests; p95 54.96ms, target <2s | Passed |
+| Sprint 8 launch-control smoke | evaluation report, fail-closed blockers, evidence gate, blocked pilot, daily review, emergency pause | Passed |
+| Sprint 8 backup/restore | isolated PostgreSQL restore contains readiness and evaluation tables; temporary database removed | Passed |
 | Container application | clean image build, startup migration, ready endpoint | Passed |
-| Anti-ban | typecheck and manual test | Passed |
+| Anti-ban | typecheck, manual regression, and dual-module build | Passed |
 | Backend production dependency audit | 0 vulnerabilities | Passed at audit time |
 | Frontend production dependency audit | 0 vulnerabilities | Passed at audit time |
 | OpenAPI | Redocly syntax and reference lint for AI and merged Admin specs | Passed |
-| Anti-ban production dependency audit | 1 High in transitive `ip-address<=10.3.0` | Open |
+| Anti-ban production dependency audit | `ip-address` pinned to patched 10.4.x; 0 production vulnerabilities | Passed at audit time |
 
-Sprint 0–6 AI-specific tests now cover:
+Sprint 0–7 AI-specific tests now cover:
 
 - default-off foundation response and guardrail constants;
 - omission of the configured secret reference from the response;
@@ -94,10 +98,17 @@ Sprint 0–6 AI-specific tests now cover:
   draft-only FAQ creation without automatic publication;
 - persistent Playground test cases, isolated deterministic memory, prompt/source
   tenant validation, run scoring, batch pass rate, and two-run comparison.
+- bounded 1–300 test-case import, immutable formal evaluation report, minimum
+  dataset and quality thresholds, zero critical-safety-failure rule;
+- tenant-scoped readiness evidence, optimistic revision, staged pilot request,
+  hard-off effective traffic, daily pilot review, and emergency pause audit;
+- Launch Readiness UI blocker visibility and explicit requested-versus-effective
+  rollout distinction.
 
 Still missing before the AI feature can serve customer traffic:
 
-- customer WhatsApp cutover and approved retrieval/medical/adversarial datasets;
+- customer WhatsApp cutover and approved 100–300 case
+  retrieval/medical/adversarial datasets;
 - production provider/storage decisions and formal Product/Medical approvals;
 - short-viewport sidebar scrolling/accessibility regression.
 
@@ -349,9 +360,9 @@ Current dependency scan candidate:
 npm audit --omit=dev --audit-level=high
 ```
 
-Run it separately in all three packages. At Sprint 3 verification time the anti-ban
-package fails because of a transitive High finding; do not hide it by auditing
-only the parent backend lockfile.
+Run it separately in all three packages. Sprint 8 pins the anti-ban package's
+transitive `ip-address` to patched 10.4.x; keep auditing the package independently
+so a clean parent lockfile cannot hide a future nested finding.
 
 Planned CI additions:
 

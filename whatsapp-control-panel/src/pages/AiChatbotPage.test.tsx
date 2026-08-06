@@ -28,33 +28,32 @@ const renderPage = (pathname = '/ai-chatbot/overview') => {
 };
 
 describe('AiChatbotPage', () => {
-  it('shows the Sprint 6 foundation and fail-closed rollout state', async () => {
+  it('shows the simplified foundation without the horizontal sprint menu', async () => {
     renderPage();
 
     expect(
       await screen.findByRole('heading', { name: 'Integrasi Chatbot AI' })
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Belum ada traffic customer yang memakai AI')
+      screen.getByText('AI WhatsApp sedang nonaktif')
     ).toBeInTheDocument();
     expect(screen.getByText('RAG terkontrol')).toBeInTheDocument();
     expect(
-      screen.getByRole('navigation', { name: 'Menu Integrasi Chatbot AI' })
-    ).toBeInTheDocument();
+      screen.queryByRole('navigation', { name: 'Menu Integrasi Chatbot AI' })
+    ).not.toBeInTheDocument();
   });
 
-  it('renders an honest placeholder for a planned module', async () => {
+  it('renders the Sprint 7 analytics dashboard from actual KPI contracts', async () => {
     renderPage('/ai-chatbot/analytics');
 
     expect(
-      await screen.findByRole('heading', { name: 'Analytics' })
+      await screen.findByRole('heading', { name: 'Statistik Chatbot' })
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', {
-        name: 'Route Analytics sudah disiapkan'
-      })
-    ).toBeInTheDocument();
-    expect(screen.getByText('Dijadwalkan pada Sprint 7')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Analytics & Observability' })).toBeInTheDocument();
+    expect(screen.getByText('82.0%')).toBeInTheDocument();
+    expect(screen.getByText('HIGH_FALLBACK')).toBeInTheDocument();
+    expect(screen.getByText('$0.0230')).toBeInTheDocument();
+    expect(await screen.findByText(/systemInstruction, fallbackMessage/)).toBeInTheDocument();
   });
 
   it('opens a nested Sprint 6 Conversation Logs route and traces its response to source', async () => {
@@ -111,16 +110,17 @@ describe('AiChatbotPage', () => {
     expect(screen.getByRole('button', { name: 'Buat draft FAQ' })).toBeDisabled();
   });
 
-  it('runs the Sprint 6 Playground and shows safety trace evidence', async () => {
+  it('runs the simplified Playground and keeps safety trace evidence available', async () => {
     const user = userEvent.setup();
     renderPage('/ai-chatbot/playground');
 
-    expect(await screen.findByRole('heading', { name: 'Testing Playground & Evaluation' })).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Pertanyaan customer'), 'Apa itu RAHO Club?');
-    await user.click(screen.getByRole('button', { name: 'Uji jawaban AI' }));
+    expect(await screen.findByRole('heading', { name: 'Coba jawaban chatbot' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Pertanyaan'), 'Apa itu RAHO Club?');
+    await user.click(screen.getByRole('button', { name: 'Tes jawaban' }));
 
     expect(await screen.findByText('RAHO Club menyediakan informasi layanan berdasarkan knowledge resmi.')).toBeInTheDocument();
-    expect(screen.getByText('0.9100', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
+    await user.click(screen.getByText('Lihat detail teknis'));
     expect(screen.getByText('af924761-829f-41b3-ac80-01163852cb76')).toBeInTheDocument();
     expect(screen.getByText('normal_faq')).toBeInTheDocument();
     expect(screen.getByText('2 pesan')).toBeInTheDocument();
@@ -197,17 +197,25 @@ describe('AiChatbotPage', () => {
     expect(
       await screen.findByRole('heading', { name: 'Provider dan retrieval' })
     ).toBeInTheDocument();
-    expect(screen.getByText('Secret terhubung')).toBeInTheDocument();
-    expect(screen.getByText('Hard-off')).toBeInTheDocument();
+    expect(screen.getByText('API key tersimpan')).toBeInTheDocument();
+    expect(screen.getByText('Nonaktif')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Aktifkan AI WhatsApp' })).toBeDisabled();
+    expect(await screen.findByRole('heading', { name: 'Launch Readiness & Pilot Gate' })).toBeInTheDocument();
+    expect(screen.getByText('EVALUATION_GATE')).toBeInTheDocument();
+    expect(screen.getByText(/effective traffic/)).toHaveTextContent('0%');
 
     const name = screen.getByLabelText('Nama integrasi');
+    const apiKey = screen.getByLabelText(/API key provider/);
+    expect(apiKey).toHaveAttribute('type', 'password');
     await user.clear(name);
     await user.type(name, 'RAHO AI Updated');
+    await user.type(apiKey, 'sk-test-provider-key-123456789');
     await user.click(screen.getByRole('button', { name: 'Simpan settings' }));
 
     await waitFor(() =>
       expect(screen.getByText(/revision 2/i)).toBeInTheDocument()
     );
+    expect(screen.getByLabelText(/API key provider/)).toHaveValue('');
   });
 
   it('tests the deterministic provider connection without exposing a secret', async () => {
@@ -246,7 +254,7 @@ describe('AiChatbotPage', () => {
     renderPage('/ai-chatbot/instructions');
 
     expect(
-      await screen.findByRole('heading', { name: 'AI Instructions', level: 1 })
+      await screen.findByRole('heading', { name: 'Gaya & Aturan Jawaban', level: 1 })
     ).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: 'Approve' }));
 
@@ -255,14 +263,11 @@ describe('AiChatbotPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('keeps the parent module active for a future nested route', async () => {
+  it('keeps nested Knowledge Base routes inside the friendly module heading', async () => {
     renderPage('/ai-chatbot/knowledge/new-faq');
 
-    await screen.findByRole('heading', { name: 'Knowledge Base' });
-    expect(screen.getByRole('link', { name: /Knowledge Base/ })).toHaveAttribute(
-      'aria-current',
-      'page'
-    );
+    await screen.findByRole('heading', { name: 'Informasi Chatbot' });
+    expect(screen.getByRole('heading', { name: 'Tambah FAQ' })).toBeInTheDocument();
   });
 
   it('does not present a blocked foundation as development-ready', async () => {
@@ -288,9 +293,8 @@ describe('AiChatbotPage', () => {
     );
     renderPage();
 
-    expect(await screen.findByText('Foundation blocked')).toBeInTheDocument();
-    expect(screen.getByText('Blocked')).toBeInTheDocument();
-    expect(screen.queryByText('Development ready')).not.toBeInTheDocument();
+    expect((await screen.findAllByText('Perlu disiapkan')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Siap diuji')).not.toBeInTheDocument();
   });
 
   it('keeps unknown AI routes inside a feature-local not-found state', async () => {

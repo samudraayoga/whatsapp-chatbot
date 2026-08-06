@@ -5,6 +5,8 @@ import path from 'node:path';
 import type { ChatbotService } from '../src/services/chatbot.service.js';
 import type { MessageService } from '../src/services/message.service.js';
 import type { OperationalEventService } from '../src/services/operational-event.service.js';
+import type { AiRagRuntimeService, RagResult } from '../src/services/ai-rag-runtime.service.js';
+import type { OutboxService } from '../src/services/outbox.service.js';
 import {
   PAIRING_QR_TTL_MS,
   WhatsAppService
@@ -85,7 +87,7 @@ describe('WhatsApp rich session lifecycle', () => {
     expect(service.getPairingQr()).toBeNull();
   });
 
-  it('uses the active empty-input rule for a contact first message', async () => {
+  it('uses the menu rule for a greeting on a contact first message', async () => {
     const chatbotService = {
       evaluate: vi.fn(async () => ({
         versionId: '3ca59c93-89f4-4c34-bb27-7d9e0887781b',
@@ -124,7 +126,7 @@ describe('WhatsApp rich session lifecycle', () => {
       pushName: 'Rina'
     } as WAMessage);
 
-    expect(chatbotService.evaluate).toHaveBeenCalledWith('');
+    expect(chatbotService.evaluate).toHaveBeenCalledWith('menu');
     expect(sendText).toHaveBeenCalledWith(
       remoteJid,
       'Sapaan aktif dari konfigurasi chatbot'
@@ -133,6 +135,125 @@ describe('WhatsApp rich session lifecycle', () => {
       expect.objectContaining({
         direction: 'outgoing',
         content: 'Sapaan aktif dari konfigurasi chatbot'
+      })
+    );
+  });
+
+  it('routes an ordinary WhatsApp question to AI and queues exactly one response', async () => {
+    const chatbotService = {
+      evaluate: vi.fn()
+    } as unknown as ChatbotService;
+    const messageService = {
+      saveMessage: vi.fn(async () => ({ inserted: true, isFirstIncoming: true })),
+      applyChatbotEvaluation: vi.fn()
+    } as unknown as MessageService;
+    const result = {
+      reply: 'RAHO Premier adalah layanan premium RAHO.',
+      traceId: 'ai-trace-1',
+      answerStatus: 'supported',
+      validationStatus: 'validated',
+      usedKnowledge: [{ chunkId: 'chunk-1' }],
+      handoff: false
+    } as unknown as RagResult;
+    const aiRuntime = {
+      respond: vi.fn(async () => result)
+    } as unknown as AiRagRuntimeService;
+    const outbox = {
+      queueAutomatedResponse: vi.fn(async () => ({
+        messageId: '2',
+        outboxId: '4b7f494c-97e7-4d85-8a20-4638ed76e7ac',
+        queued: true
+      }))
+    } as unknown as OutboxService;
+    const service = new WhatsAppService(
+      chatbotService,
+      messageService,
+      undefined,
+      aiRuntime,
+      outbox,
+      '00000000-0000-4000-8000-000000000001'
+    );
+
+    await (service as unknown as SessionHarness).processIncomingMessage({
+      key: {
+        id: 'incoming-ai-message',
+        remoteJid: '6281234567890@s.whatsapp.net',
+        fromMe: false
+      },
+      message: { conversation: 'Apa itu RAHO Premier?' },
+      pushName: 'Rina'
+    } as WAMessage);
+
+    expect(aiRuntime.respond).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'whatsapp',
+      providerMessageId: 'incoming-ai-message',
+      message: 'Apa itu RAHO Premier?',
+      requireActiveIntegration: true
+    }));
+    expect(chatbotService.evaluate).not.toHaveBeenCalled();
+    expect(outbox.queueAutomatedResponse).toHaveBeenCalledOnce();
+    expect(outbox.queueAutomatedResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseProviderMessageId: 'incoming-ai-message:ai',
+        text: result.reply,
+        source: 'ai'
+      })
+    );
+  });
+
+  it('falls back to the legacy response queue when AI fails', async () => {
+    const chatbotService = {
+      evaluate: vi.fn(async () => ({
+        versionId: '3ca59c93-89f4-4c34-bb27-7d9e0887781b',
+        revision: 7,
+        normalizedInput: 'pertanyaan baru',
+        matchedRule: {
+          id: 'ec53bfd2-a990-4e1a-866c-45145ee96c93',
+          triggerType: 'fallback',
+          priority: 1000,
+          matchedTrigger: null,
+          action: 'reply'
+        },
+        response: 'Maaf, informasi belum tersedia. Balas 0 untuk Admin.'
+      }))
+    } as unknown as ChatbotService;
+    const messageService = {
+      saveMessage: vi.fn(async () => ({ inserted: true, isFirstIncoming: false })),
+      applyChatbotEvaluation: vi.fn(async () => undefined)
+    } as unknown as MessageService;
+    const aiRuntime = {
+      respond: vi.fn(async () => { throw new Error('provider unavailable'); })
+    } as unknown as AiRagRuntimeService;
+    const outbox = {
+      queueAutomatedResponse: vi.fn(async () => ({
+        messageId: '3',
+        outboxId: '4b7f494c-97e7-4d85-8a20-4638ed76e7ac',
+        queued: true
+      }))
+    } as unknown as OutboxService;
+    const service = new WhatsAppService(
+      chatbotService,
+      messageService,
+      undefined,
+      aiRuntime,
+      outbox,
+      '00000000-0000-4000-8000-000000000001'
+    );
+
+    await (service as unknown as SessionHarness).processIncomingMessage({
+      key: {
+        id: 'incoming-fallback-message',
+        remoteJid: '6281234567890@s.whatsapp.net',
+        fromMe: false
+      },
+      message: { conversation: 'Pertanyaan baru' }
+    } as WAMessage);
+
+    expect(chatbotService.evaluate).toHaveBeenCalledWith('Pertanyaan baru');
+    expect(outbox.queueAutomatedResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseProviderMessageId: 'incoming-fallback-message:legacy',
+        source: 'legacy_fallback'
       })
     );
   });

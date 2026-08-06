@@ -106,6 +106,16 @@ export const createAdminRouter = ({
     keyGenerator: (request) =>
       request.adminAuth?.id ?? 'unauthenticated-admin'
   });
+  const adminApiRateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 300,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: (request) => request.adminAuth?.id ?? 'unauthenticated-admin',
+    handler: (request, response) => response.status(429).json({ error: {
+      code: 'ADMIN_API_RATE_LIMITED', message: 'Admin API rate limit exceeded.', requestId: request.requestId
+    } })
+  });
 
   router.use('/api/admin/v1', validateAdminOrigin);
   router.post(
@@ -115,6 +125,7 @@ export const createAdminRouter = ({
   );
 
   router.use('/api/admin/v1', authenticate);
+  router.use('/api/admin/v1', adminApiRateLimiter);
   router.get('/api/admin/v1/me', authController.me);
   router.post(
     '/api/admin/v1/auth/logout',
@@ -558,6 +569,12 @@ export const createAdminRouter = ({
     requireTenantPermission('ai.evaluations.manage'),
     aiOperationsController.createTestCase
   );
+  router.post(
+    '/api/admin/v1/ai-chatbot/playground/test-cases/import',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.evaluations.manage'),
+    aiOperationsController.importTestCases
+  );
   router.put(
     '/api/admin/v1/ai-chatbot/playground/test-cases/:testCaseId',
     mutationRateLimiter, verifyCsrf, resolveTenant,
@@ -575,6 +592,84 @@ export const createAdminRouter = ({
     mutationRateLimiter, verifyCsrf, resolveTenant,
     requireTenantPermission('ai.evaluations.manage'),
     aiOperationsController.runBatch
+  );
+  router.get(
+    '/api/admin/v1/ai-chatbot/analytics/overview',
+    resolveTenant,
+    requireTenantPermission('ai.analytics.read'),
+    aiOperationsController.analytics
+  );
+  for (const metric of ['answer-rate', 'fallback-rate', 'handoff-rate', 'top-questions', 'cost']) {
+    router.get(
+      `/api/admin/v1/ai-chatbot/analytics/${metric}`,
+      resolveTenant,
+      requireTenantPermission('ai.analytics.read'),
+      aiOperationsController.analytics
+    );
+  }
+  router.get(
+    '/api/admin/v1/ai-chatbot/analytics/version-changes',
+    resolveTenant,
+    requireTenantPermission('ai.analytics.read'),
+    aiOperationsController.versionChanges
+  );
+  router.get(
+    '/api/admin/v1/ai-chatbot/release-readiness',
+    resolveTenant, requireTenantPermission('ai.pilot.read'),
+    aiOperationsController.releaseReadiness
+  );
+  router.post(
+    '/api/admin/v1/ai-chatbot/release-readiness/evaluate',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.evaluations.manage'),
+    aiOperationsController.generateEvaluationReport
+  );
+  router.put(
+    '/api/admin/v1/ai-chatbot/release-readiness/gates/:gateKey',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.release.manage'),
+    aiOperationsController.updateReleaseGate
+  );
+  router.put(
+    '/api/admin/v1/ai-chatbot/release-readiness/pilot',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.release.manage'),
+    aiOperationsController.updatePilotConfiguration
+  );
+  router.post(
+    '/api/admin/v1/ai-chatbot/release-readiness/emergency-pause',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.release.manage'),
+    aiOperationsController.emergencyPausePilot
+  );
+  router.get(
+    '/api/admin/v1/ai-chatbot/pilot/daily-review',
+    resolveTenant, requireTenantPermission('ai.pilot.read'),
+    aiOperationsController.pilotDailyReview
+  );
+  router.get(
+    '/api/admin/v1/ai-chatbot/operations/settings',
+    resolveTenant,
+    requireTenantPermission('ai.operations.manage'),
+    aiOperationsController.getOperationalSettings
+  );
+  router.put(
+    '/api/admin/v1/ai-chatbot/operations/settings',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.operations.manage'),
+    aiOperationsController.updateOperationalSettings
+  );
+  router.post(
+    '/api/admin/v1/ai-chatbot/operations/apply-retention',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.privacy.manage'),
+    aiOperationsController.applyRetention
+  );
+  router.post(
+    '/api/admin/v1/ai-chatbot/conversations/:conversationId/anonymize',
+    mutationRateLimiter, verifyCsrf, resolveTenant,
+    requireTenantPermission('ai.privacy.manage'),
+    aiOperationsController.anonymizeConversation
   );
   router.get(
     '/api/admin/v1/ai-chatbot/conversations/export.csv',

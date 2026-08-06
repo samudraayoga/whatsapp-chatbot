@@ -19,6 +19,9 @@ import P from 'pino';
 import { ChatbotService } from './chatbot.service.js';
 import { MessageService } from './message.service.js';
 import { OperationalEventService } from './operational-event.service.js';
+import { AiRagRuntimeService, type RagResult } from './ai-rag-runtime.service.js';
+import { OutboxService } from './outbox.service.js';
+import { routeHybridChatbotMessage } from './hybrid-chatbot-router.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { maskPhoneNumber } from '../utils/phone.js';
@@ -79,6 +82,7 @@ export type SendingBlock = {
 const baileysLogger = P({ level: 'silent' });
 type ProtectedWASocket = ReturnType<typeof makeWASocket> & { antiban: AntiBan };
 export const PAIRING_QR_TTL_MS = 10_000;
+export const WHATSAPP_SEND_TIMEOUT_MS = 30_000;
 const ANTIBAN_STATE_FILENAME = 'antiban-state.json';
 
 export class ReconnectNotAllowedError extends Error {
@@ -222,7 +226,10 @@ export class WhatsAppService {
   constructor(
     private readonly chatbotService: ChatbotService,
     private readonly messageService: MessageService,
-    private readonly operationalEvents?: OperationalEventService
+    private readonly operationalEvents?: OperationalEventService,
+    private readonly aiRuntime?: AiRagRuntimeService,
+    private readonly outbox?: OutboxService,
+    private readonly aiTenantId: string | null = env.AI_CHATBOT_DEFAULT_TENANT_ID
   ) {}
 
   getStatus(): WhatsAppStatus {
@@ -805,8 +812,41 @@ export class WhatsAppService {
       phone: maskPhoneNumber(remoteJid.replace(/@.+$/, ''))
     });
 
+    const route = routeHybridChatbotMessage(text);
+    if (route.kind === 'ai' && this.aiRuntime && this.aiTenantId) {
+      try {
+        const result = await this.aiRuntime.respond({
+          tenantId: this.aiTenantId,
+          channel: 'whatsapp',
+          channelSessionId: remoteJid,
+          customerIdentifier: remoteJid,
+          providerMessageId: whatsappMessageId,
+          message: text,
+          timestamp: new Date().toISOString(),
+          requireActiveIntegration: true
+        });
+        await this.deliverAiResponse({
+          remoteJid,
+          incomingProviderMessageId: whatsappMessageId,
+          result
+        });
+        return;
+      } catch (error) {
+        const reason = sanitizeOperationalError(
+          error,
+          'Unknown AI runtime error'
+        );
+        logger.warn('AI response failed; using legacy fallback', {
+          error: reason
+        });
+        this.publishOperationalEvent('ai.whatsapp_fallback', 'warning', {
+          reason
+        });
+      }
+    }
+
     const evaluation = await this.chatbotService.evaluate(
-      savedIncoming.isFirstIncoming ? '' : text
+      route.kind === 'legacy' ? route.canonicalInput : text
     );
     const responseText = evaluation.response;
 
@@ -818,8 +858,24 @@ export class WhatsAppService {
       createHandoff: evaluation.matchedRule.action === 'create_handoff'
     });
 
-    const response = await this.sendText(remoteJid, responseText);
+    const legacySource = route.kind === 'legacy' ? 'legacy' : 'legacy_fallback';
+    if (this.outbox) {
+      await this.outbox.queueAutomatedResponse({
+        sourceProviderMessageId: whatsappMessageId,
+        responseProviderMessageId: `${whatsappMessageId}:legacy`,
+        text: responseText,
+        source: legacySource,
+        metadata: {
+          chatbotVersionId: evaluation.versionId,
+          chatbotRevision: evaluation.revision,
+          chatbotRuleId: evaluation.matchedRule.id,
+          hybridRoute: route.kind === 'legacy' ? route.command : 'ai_fallback'
+        }
+      });
+      return;
+    }
 
+    const response = await this.sendText(remoteJid, responseText);
     await this.messageService.saveMessage({
       whatsappMessageId: response?.key.id ?? null,
       whatsappJid: remoteJid,
@@ -829,8 +885,44 @@ export class WhatsAppService {
       metadata: {
         chatbotVersionId: evaluation.versionId,
         chatbotRevision: evaluation.revision,
-        chatbotRuleId: evaluation.matchedRule.id
+        chatbotRuleId: evaluation.matchedRule.id,
+        hybridRoute: route.kind === 'legacy' ? route.command : 'ai_fallback'
       }
+    });
+  }
+
+  private async deliverAiResponse(input: {
+    remoteJid: string;
+    incomingProviderMessageId: string;
+    result: RagResult;
+  }): Promise<void> {
+    const metadata = {
+      aiRuntime: true,
+      traceId: input.result.traceId,
+      answerStatus: input.result.answerStatus,
+      validationStatus: input.result.validationStatus,
+      sourceCount: input.result.usedKnowledge.length,
+      hybridRoute: 'ai'
+    };
+    if (this.outbox) {
+      await this.outbox.queueAutomatedResponse({
+        sourceProviderMessageId: input.incomingProviderMessageId,
+        responseProviderMessageId: `${input.incomingProviderMessageId}:ai`,
+        text: input.result.reply,
+        source: 'ai',
+        metadata,
+        priority: input.result.handoff ? 'high' : 'normal'
+      });
+      return;
+    }
+    const response = await this.sendText(input.remoteJid, input.result.reply);
+    await this.messageService.saveMessage({
+      whatsappMessageId: response?.key.id ?? null,
+      whatsappJid: input.remoteJid,
+      direction: 'outgoing',
+      content: input.result.reply,
+      status: 'sent',
+      metadata
     });
   }
 
@@ -843,7 +935,18 @@ export class WhatsAppService {
       throw new Error('WhatsApp is not connected');
     }
 
-    const response = await this.socket.sendMessage(jid, { text });
+    let timeout: NodeJS.Timeout | null = null;
+    const response = await Promise.race([
+      this.socket.sendMessage(jid, { text }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error('WhatsApp send timed out with unknown outcome'));
+        }, WHATSAPP_SEND_TIMEOUT_MS);
+        timeout.unref();
+      })
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
 
     logger.info('Outgoing WhatsApp message sent', {
       phone: maskPhoneNumber(jid.replace(/@.+$/, ''))

@@ -32,10 +32,14 @@ const messageService = new MessageService();
 const operationalEventService = new OperationalEventService();
 const outboxService = new OutboxService();
 const handoffService = new HandoffService();
+const aiRagRuntimeService = new AiRagRuntimeService();
 const whatsappService = new WhatsAppService(
   chatbotService,
   messageService,
-  operationalEventService
+  operationalEventService,
+  aiRagRuntimeService,
+  outboxService,
+  env.AI_CHATBOT_DEFAULT_TENANT_ID
 );
 const auditService = new AuditService();
 const adminAuthService = new AdminAuthService(undefined, {
@@ -77,8 +81,6 @@ const documentWorker = createProcessingWorker(
   (job, attempt) => documentService.processJob(job, attempt),
   env.AI_DOCUMENT_WORKER_CONCURRENCY
 );
-const aiRagRuntimeService = new AiRagRuntimeService();
-
 let httpServer: Server | null = null;
 let isShuttingDown = false;
 

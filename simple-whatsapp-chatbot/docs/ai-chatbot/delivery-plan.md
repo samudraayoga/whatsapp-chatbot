@@ -403,9 +403,15 @@ Story selesai bila:
 - Incident runbook, rollback/kill switch, cost limits, production sign-off.
 - Critical/High bug = 0.
 
-## External dependencies remaining after Sprint 4
+Engineering status: evaluation/reporting, evidence gates, daily review,
+sequential pilot requests, admin guidance, and emergency pause are implemented.
+Production status remains blocked: real 100–300-case results, named owners,
+Medical/Product/Security/UAT approval, production provider/platform, staging
+evidence, and customer-adapter cutover are external inputs and were not fabricated.
 
-Sprint 4 Alpha RAG tooling is ready, but customer traffic cannot open until:
+## External dependencies remaining after Sprint 8
+
+Sprint 8 launch-control tooling is ready, but customer traffic cannot open until:
 
 1. Product Owner approves MVP/non-goals and roadmap.
 2. Knowledge Owner, Medical Reviewer, Security/Privacy, and Handoff owner exist.

@@ -68,7 +68,11 @@ Sprint 5 menyediakan:
 - Update memakai revision check tersembunyi agar dua tab tidak saling menimpa.
 - Contract test memakai fixture terisolasi; workflow runtime selalu memakai backend.
 
-Sprint 6 menyediakan:
+Sprint 8 menambahkan Launch Readiness, evaluation gate, evidence sign-off,
+requested staged pilot, dan emergency pause di atas Analytics Sprint 7. Customer
+traffic tetap hard-off dan UI selalu menampilkan effective pilot 0%.
+
+Fitur operasional lain yang tersedia:
 
 - Safety Center pada `/operations/safety`.
 - Blocker/delay reason dan rekomendasi yang dapat ditelusuri ke message timeline.

@@ -39,7 +39,7 @@ export type UpdateAiIntegrationInput = Pick<
   | 'featureFlags'
 > & {
   expectedRevision: number;
-  secretReference?: string | null;
+  apiKey?: string | null;
 };
 
 export type CreateAiPromptInput = {

@@ -8,7 +8,7 @@ info:
     concurrency, unsaved-rule preview, atomic save, and audit. Safety controls
     and one-click WhatsApp credential reset/re-pair remain protected.
     Browser clients authenticate using a secure server-managed session cookie.
-    The canonical detailed contract for /api/admin/v1/ai-chatbot/* Sprint 6
+    The canonical detailed contract for /api/admin/v1/ai-chatbot/* Sprint 8
     operations is maintained in ../ai-chatbot/openapi.yaml.
 servers:
   - url: http://localhost:3000
@@ -1201,7 +1201,7 @@ components:
             apiVersion:
               const: v1
             phase:
-              const: sprint_6
+              const: sprint_8
             status:
               type: string
               enum: [development_ready, blocked]

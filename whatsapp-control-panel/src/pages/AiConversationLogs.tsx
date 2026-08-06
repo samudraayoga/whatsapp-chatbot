@@ -4,6 +4,7 @@ import {
   listAiConversationMessages,
   listAiConversations,
   saveAiFeedback,
+  anonymizeAiConversation,
   type ConversationFilters
 } from '../api/ai-operations';
 import { StatusBadge } from '../components/StatusBadge';
@@ -34,6 +35,13 @@ export const AiConversationLogs = ({ conversationId = null }: { conversationId?:
       queryClient.invalidateQueries({ queryKey: ['ai-conversations'] });
     }
   });
+  const anonymize = useMutation({
+    mutationFn: (id: string) => anonymizeAiConversation(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-conversation-messages', selectedId] });
+    }
+  });
 
   return <div className="ai-operations-layout">
     <section className="panel ai-operations-toolbar">
@@ -59,11 +67,14 @@ export const AiConversationLogs = ({ conversationId = null }: { conversationId?:
             </button>)}
         </section>
         <section className="ai-conversation-detail">
+          {selectedId && <button className="button" type="button" disabled={anonymize.isPending} onClick={() => {
+            if (window.confirm('Anonymize isi conversation ini? Isi asli tidak dapat dipulihkan.')) anonymize.mutate(selectedId);
+          }}>Anonymize conversation</button>}
           {!selectedId ? <div className="empty-stage"><p>Pilih conversation untuk melihat timeline dan evidence.</p></div> : messages.isPending ? <p>Memuat timeline…</p> : messages.isError ? <p className="form-error">Timeline gagal dimuat.</p> : messages.data.data.map((message) =>
             <article className="panel ai-trace-card" key={message.id}>
               <header><div><p className="eyebrow">{message.safetyCategory} · {formatDate(message.createdAt)}</p><h3>{message.answerStatus}</h3></div><StatusBadge tone={message.validationStatus === 'validated' ? 'success' : 'danger'}>{message.validationStatus}</StatusBadge></header>
               <div className="ai-message-pair"><div><strong>Customer</strong><p>{message.customerMessage}</p></div><div><strong>Chatbot</strong><p>{message.assistantMessage ?? 'Tidak ada response tersimpan.'}</p></div></div>
-              <dl className="alpha-rag-metrics"><div><dt>Model</dt><dd>{message.model ?? 'Tidak dipanggil'}</dd></div><div><dt>Prompt</dt><dd><code>{message.promptVersionId ?? '—'}</code></dd></div><div><dt>Token</dt><dd>{message.inputTokens + message.outputTokens}</dd></div><div><dt>Latency</dt><dd>{message.latencyMs} ms</dd></div><div><dt>Fallback</dt><dd>{message.fallbackReason ?? '—'}</dd></div><div><dt>Trace</dt><dd><code>{message.traceId}</code></dd></div></dl>
+              <dl className="alpha-rag-metrics"><div><dt>Model</dt><dd>{message.model ?? 'Tidak dipanggil'}</dd></div><div><dt>Prompt</dt><dd><code>{message.promptVersionId ?? '—'}</code></dd></div><div><dt>Token</dt><dd>{message.inputTokens + message.outputTokens}</dd></div><div><dt>Latency</dt><dd>{message.latencyMs} ms</dd></div><div><dt>Cache</dt><dd>{message.cacheHit ? 'Hit' : 'Miss'}</dd></div><div><dt>Fallback</dt><dd>{message.fallbackReason ?? '—'}</dd></div><div><dt>Trace</dt><dd><code>{message.traceId}</code></dd></div></dl>
               <details><summary>Knowledge sources ({message.sources.length})</summary>{message.sources.length === 0 ? <p>Tidak ada source.</p> : <ol>{message.sources.map((source) => <li key={source.chunkId}><strong>{source.title ?? source.sourceType}</strong> · score {source.score.toFixed(4)} · {source.usedInAnswer ? 'dipakai' : 'retrieved'}</li>)}</ol>}</details>
               {message.feedback ? <p className="ai-feedback-saved"><strong>Feedback:</strong> {message.feedback.type}{message.feedback.comment ? ` — ${message.feedback.comment}` : ''}</p> :
                 <div className="ai-feedback-form"><select aria-label="Tipe feedback" value={feedbackType} onChange={(event) => setFeedbackType(event.target.value as typeof feedbackType)}><option value="correct">Correct</option><option value="incorrect">Incorrect</option><option value="incomplete">Incomplete</option><option value="unsafe">Unsafe</option><option value="wrong_source">Wrong source</option><option value="too_long">Too long</option><option value="too_promotional">Too promotional</option></select><input aria-label="Komentar feedback" maxLength={2000} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Komentar reviewer (opsional)" /><button type="button" disabled={feedback.isPending} onClick={() => feedback.mutate(message.id)}>Simpan feedback</button></div>}

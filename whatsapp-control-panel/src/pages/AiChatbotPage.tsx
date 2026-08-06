@@ -14,6 +14,7 @@ import { AiChatbotPlayground } from './AiChatbotPlayground';
 import { AiHandoffQueue } from './AiHandoffQueue';
 import { AiConversationLogs } from './AiConversationLogs';
 import { AiUnansweredQuestions } from './AiUnansweredQuestions';
+import { AiAnalytics } from './AiAnalytics';
 
 const aiChatbotFoundationQueryKey = [
   'ai-chatbot',
@@ -30,6 +31,30 @@ const moduleDescription: Record<AiChatbotModule['key'], string> = {
   handoffs: 'Teruskan percakapan yang memerlukan tindak lanjut kepada Admin RAHO.',
   analytics: 'Pantau answer rate, fallback, handoff, kualitas, dan biaya.',
   settings: 'Atur provider, retrieval, safety, memory, dan feature activation.'
+};
+
+const moduleTitle: Record<AiChatbotModule['key'], string> = {
+  overview: 'Integrasi Chatbot AI',
+  knowledge: 'Informasi Chatbot',
+  instructions: 'Gaya & Aturan Jawaban',
+  playground: 'Tes Chatbot',
+  conversations: 'Aktivitas Chatbot',
+  unanswered: 'Belum Bisa Dijawab',
+  handoffs: 'Bantuan Admin',
+  analytics: 'Statistik Chatbot',
+  settings: 'Pengaturan AI'
+};
+
+const moduleIntro: Record<AiChatbotModule['key'], string> = {
+  overview: 'Atur chatbot agar bisa menjawab pelanggan dari informasi resmi RAHO.',
+  knowledge: 'Kelola informasi resmi yang boleh dipakai chatbot untuk menjawab.',
+  instructions: 'Atur gaya bahasa dan batasan jawaban chatbot.',
+  playground: 'Coba jawaban chatbot dengan aman sebelum digunakan oleh pelanggan.',
+  conversations: 'Lihat pertanyaan pelanggan dan jawaban yang diberikan chatbot.',
+  unanswered: 'Temukan pertanyaan pelanggan yang belum bisa dijawab chatbot.',
+  handoffs: 'Tindak lanjuti percakapan yang memerlukan bantuan manusia.',
+  analytics: 'Lihat performa dan kualitas jawaban chatbot.',
+  settings: 'Atur koneksi AI dan cara chatbot mencari informasi.'
 };
 
 const capabilityLabel = {
@@ -57,45 +82,6 @@ const shouldHandleNavigation = (
   !event.ctrlKey &&
   !event.metaKey &&
   !event.shiftKey;
-
-const AiModuleNavigation = ({
-  modules,
-  pathname
-}: {
-  modules: AiChatbotModule[];
-  pathname: string;
-}) => (
-  <nav aria-label="Menu Integrasi Chatbot AI" className="ai-module-nav">
-    <ul>
-      {modules.map((module) => {
-        const active =
-          module.path === pathname ||
-          pathname.startsWith(`${module.path}/`) ||
-          (module.key === 'overview' && pathname === '/ai-chatbot');
-        return (
-          <li key={module.key}>
-            <a
-              aria-current={active ? 'page' : undefined}
-              data-active={active}
-              href={module.path}
-              onClick={(event) => {
-                if (!shouldHandleNavigation(event)) return;
-                event.preventDefault();
-                navigate(module.path);
-              }}
-            >
-              <span>{module.label}</span>
-              <small>
-                <span aria-hidden="true">S{module.targetSprint}</span>
-                <span className="sr-only">Sprint {module.targetSprint}</span>
-              </small>
-            </a>
-          </li>
-        );
-      })}
-    </ul>
-  </nav>
-);
 
 const FoundationOverview = ({
   data
@@ -129,12 +115,17 @@ const FoundationOverview = ({
     <>
       <section className="ai-foundation-callout" aria-label="Status rollout">
         <div>
-          <p className="eyebrow">Fail-closed sejak hari pertama</p>
-          <h2>Belum ada traffic customer yang memakai AI</h2>
+          <p className="eyebrow">Status penggunaan</p>
+          <h2>
+            {data.runtime.enabled
+              ? 'AI aktif membalas pertanyaan pelanggan'
+              : 'AI WhatsApp sedang nonaktif'}
+          </h2>
         </div>
         <p>
-          Runtime tetap nonaktif sampai Knowledge Base, safety validator, evaluasi,
-          UAT, dan pilot gate dinyatakan lulus.
+          {data.runtime.enabled
+            ? 'Pertanyaan umum dijawab dari Knowledge Base; menu, Admin, dan booking tetap ditangani bot aturan.'
+            : 'Aktifkan AI WhatsApp dari Pengaturan setelah provider, instruksi, dan Knowledge Base siap.'}
         </p>
       </section>
 
@@ -184,14 +175,14 @@ const FoundationOverview = ({
               <p className="eyebrow">Release</p>
               <h2>
                 {data.status === 'development_ready'
-                  ? 'Development ready'
-                  : 'Foundation blocked'}
+                  ? 'Siap diuji'
+                  : 'Perlu disiapkan'}
               </h2>
             </div>
             <StatusBadge
               tone={data.status === 'development_ready' ? 'success' : 'danger'}
             >
-              Sprint 6
+              Status
             </StatusBadge>
           </div>
           <p className="metric-card__description">
@@ -245,8 +236,8 @@ const FoundationOverview = ({
       <section className="panel ai-roadmap-panel">
         <div className="panel__heading">
           <div>
-            <p className="eyebrow">Route map</p>
-            <h2>Modul menuju production</h2>
+            <p className="eyebrow">Fitur tersedia</p>
+            <h2>Yang bisa dikelola</h2>
           </div>
           <StatusBadge tone="info">9 modul</StatusBadge>
         </div>
@@ -256,7 +247,7 @@ const FoundationOverview = ({
               <div>
                 <strong>{module.label}</strong>
                 <StatusBadge tone={module.state === 'available' ? 'success' : 'neutral'}>
-                  Sprint {module.targetSprint}
+                  {module.state === 'available' ? 'Tersedia' : 'Dalam persiapan'}
                 </StatusBadge>
               </div>
               <p>{moduleDescription[module.key]}</p>
@@ -337,7 +328,6 @@ export const AiChatbotPage = ({ pathname }: { pathname: string }) => {
   if (!activeModule) {
     return (
       <div className="ai-chatbot-page">
-        <AiModuleNavigation modules={data.modules} pathname={normalizedPath} />
         <section className="page-state page-state--error" role="alert">
           <p className="eyebrow">404 · Modul AI</p>
           <h1>Modul tidak ditemukan</h1>
@@ -353,18 +343,14 @@ export const AiChatbotPage = ({ pathname }: { pathname: string }) => {
     <div className="ai-chatbot-page">
       <header className="page-heading page-heading--compact">
         <div>
-          <p className="eyebrow">Sprint 6 · Admin Operations Beta</p>
-          <h1>{activeModule.key === 'overview' ? 'Integrasi Chatbot AI' : activeModule.label}</h1>
-          <p>
-            Chatbot FAQ RAHO berbasis RAG yang aman, terkontrol, dan dapat diaudit.
-          </p>
+          <p className="eyebrow">Chatbot AI</p>
+          <h1>{moduleTitle[activeModule.key]}</h1>
+          <p>{moduleIntro[activeModule.key]}</p>
         </div>
         <StatusBadge tone={data.status === 'development_ready' ? 'success' : 'danger'}>
-          {data.status === 'development_ready' ? 'Development ready' : 'Blocked'}
+          {data.status === 'development_ready' ? 'Siap diuji' : 'Perlu disiapkan'}
         </StatusBadge>
       </header>
-
-      <AiModuleNavigation modules={data.modules} pathname={normalizedPath} />
 
       {activeModule.key === 'overview' ? (
         <FoundationOverview data={data} />
@@ -385,6 +371,8 @@ export const AiChatbotPage = ({ pathname }: { pathname: string }) => {
         />
       ) : activeModule.key === 'unanswered' ? (
         <AiUnansweredQuestions />
+      ) : activeModule.key === 'analytics' ? (
+        <AiAnalytics />
       ) : (
         <PlannedModule module={activeModule} />
       )}

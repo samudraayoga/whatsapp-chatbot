@@ -34,6 +34,15 @@ type CommandResponse = {
   state: 'accepted';
 };
 
+type QueueAutomatedResponseInput = {
+  sourceProviderMessageId: string;
+  responseProviderMessageId: string;
+  text: string;
+  source: 'ai' | 'legacy' | 'legacy_fallback';
+  metadata?: Record<string, unknown>;
+  priority?: MessagePriority;
+};
+
 export type ClaimedOutboxItem = {
   outboxId: string;
   messageId: string;
@@ -66,6 +75,119 @@ const isUuid = (value: string): boolean =>
   );
 
 export class OutboxService {
+  async queueAutomatedResponse(input: QueueAutomatedResponseInput): Promise<{
+    messageId: string;
+    outboxId: string;
+    queued: boolean;
+  }> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const message = await client.query<{ id: string; content: string }>(
+        `
+          INSERT INTO messages (
+            whatsapp_message_id,
+            contact_id,
+            direction,
+            message_type,
+            content,
+            status,
+            priority,
+            queued_at,
+            metadata,
+            updated_at
+          )
+          SELECT
+            $2,
+            source.contact_id,
+            'outgoing',
+            'text',
+            $3,
+            'accepted',
+            $4,
+            NOW(),
+            $5::jsonb,
+            NOW()
+          FROM messages source
+          WHERE source.whatsapp_message_id = $1
+            AND source.direction = 'incoming'
+          ON CONFLICT (whatsapp_message_id) DO UPDATE SET
+            status = CASE
+              WHEN messages.status = 'generated' THEN 'accepted'
+              ELSE messages.status
+            END,
+            priority = EXCLUDED.priority,
+            queued_at = COALESCE(messages.queued_at, NOW()),
+            metadata = COALESCE(messages.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+            updated_at = NOW()
+          RETURNING id::text, content;
+        `,
+        [
+          input.sourceProviderMessageId,
+          input.responseProviderMessageId,
+          input.text,
+          input.priority ?? 'normal',
+          JSON.stringify({ source: input.source, ...(input.metadata ?? {}) })
+        ]
+      );
+      const row = message.rows[0];
+      if (!row) {
+        throw new AppError(
+          'Incoming message for automated response was not found',
+          404,
+          'AUTOMATED_RESPONSE_SOURCE_NOT_FOUND'
+        );
+      }
+      if (row.content !== input.text) {
+        throw new AppError(
+          'Automated response ID was already used with different content',
+          409,
+          'AUTOMATED_RESPONSE_IDEMPOTENCY_CONFLICT'
+        );
+      }
+
+      const outbox = await client.query<{ id: string }>(
+        `
+          INSERT INTO outbox_messages (id, message_id, state, next_attempt_at)
+          VALUES ($1::uuid, $2::bigint, 'queued', NOW())
+          ON CONFLICT (message_id) DO NOTHING
+          RETURNING id::text;
+        `,
+        [randomUUID(), row.id]
+      );
+      const existing = outbox.rows[0]
+        ? null
+        : await client.query<{ id: string }>(
+            'SELECT id::text FROM outbox_messages WHERE message_id = $1::bigint;',
+            [row.id]
+          );
+      const outboxId = outbox.rows[0]?.id ?? existing?.rows[0]?.id;
+      if (!outboxId) {
+        throw new AppError(
+          'Automated response could not be queued',
+          500,
+          'AUTOMATED_RESPONSE_QUEUE_FAILED'
+        );
+      }
+
+      if (outbox.rows[0]) {
+        await this.appendEvent(client, row.id, 'accepted', null, {
+          source: input.source
+        });
+        await this.appendEvent(client, row.id, 'queued', null, {
+          source: input.source
+        });
+      }
+      await client.query('COMMIT');
+      return { messageId: row.id, outboxId, queued: Boolean(outbox.rows[0]) };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createMessage(input: CreateMessageInput): Promise<CommandResponse> {
     const client = await pool.connect();
     const scope = `admin.message.create:${input.actorUserId}`;

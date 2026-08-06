@@ -11,7 +11,7 @@ fitur tersebut sudah deployed.
 
 ### Implementation snapshot
 
-Implemented sampai akhir Sprint 6:
+Implemented sampai akhir Sprint 8:
 
 - sidebar/route shell `/ai-chatbot/*` dan Overview foundation;
 - foundation, tenant-scoped integration/readiness, connection-test, dan prompt
@@ -38,6 +38,9 @@ Implemented sampai akhir Sprint 6:
   plus deterministic local mock;
 - admin Alpha RAG Console untuk melihat answer, status, source/score, token,
   latency, model, prompt version, dan trace ID;
+- bounded evaluation import/reporting, auditable ten-party evidence gates,
+  fail-closed release readiness, sequential requested pilot stages, daily review,
+  and emergency pause; effective customer traffic remains hard-off;
 - deterministic safety pre-check, emergency/medical/admin/prompt-injection
   short circuit, output claim/leakage validator, disclaimer injection;
 - bounded 6–10-message conversation memory, deterministic minimum-fact summary,
@@ -296,7 +299,7 @@ runtime design Sprint 4.
 
 ## Sequence 4 — Low-confidence fallback
 
-Status: **Implemented through Sprint 6**. Unsupported responses are aggregated
+Status: **Implemented through Sprint 8**. Unsupported responses are aggregated
 exactly, linked to traces/conversations, and can create a draft FAQ. Conservative
 embedding-near clustering and manual merge/split remain deferred.
 

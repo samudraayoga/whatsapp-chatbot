@@ -41,6 +41,27 @@ describe('AI chatbot request validation', () => {
     });
   });
 
+  it('accepts a provider API key for encrypted server-side storage', () => {
+    const { secretReference: _secretReference, ...withoutReference } = integrationInput;
+    const parsed = parseIntegrationUpdate({
+      ...withoutReference,
+      apiKey: 'sk-test-provider-key-123456789'
+    });
+
+    expect(parsed.apiKey).toBe('sk-test-provider-key-123456789');
+    expect(parsed).not.toHaveProperty('secretReference');
+  });
+
+  it('rejects invalid API keys and conflicting credential inputs', () => {
+    expect(() =>
+      parseIntegrationUpdate({ ...integrationInput, apiKey: 'too-short' })
+    ).toThrow(/cannot be changed together/);
+    const { secretReference: _secretReference, ...withoutReference } = integrationInput;
+    expect(() =>
+      parseIntegrationUpdate({ ...withoutReference, apiKey: 'short' })
+    ).toThrow(/between 8 and 500/);
+  });
+
   it('rejects plaintext-looking secrets and disabled strict grounding', () => {
     expect(() =>
       parseIntegrationUpdate({

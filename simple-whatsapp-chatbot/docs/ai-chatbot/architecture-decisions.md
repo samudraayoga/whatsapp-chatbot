@@ -111,10 +111,12 @@ Provider failure tidak boleh beralih ke model yang belum di-approve. Fallback
 model hanya digunakan bila konfigurasi, data policy, schema, dan safety test yang
 sama telah disetujui; selain itu gunakan customer-safe fallback message.
 
-Sprint 4 hanya me-resolve `env://VARIABLE_NAME` pada provider call boundary.
-Raw credential tidak masuk integration row, browser response, audit, trace, atau
-log. Vault/cloud secret-manager schemes membutuhkan resolver deployment sebelum
-production.
+Provider call boundary mendukung reference deployment `env://VARIABLE_NAME` dan
+credential yang dimasukkan melalui UI Admin. Credential UI disegel dengan
+AES-256-GCM sebelum masuk integration row dan hanya dibuka tepat sebelum request
+provider. Raw credential tidak masuk browser response, audit, trace, atau log.
+Key enkripsi diturunkan secara domain-separated dari secret server `API_KEY`;
+rotasi secret server harus disertai rotasi ulang credential provider.
 
 ## ADR-AI-008 — Existing message dan handoff menjadi source of truth
 

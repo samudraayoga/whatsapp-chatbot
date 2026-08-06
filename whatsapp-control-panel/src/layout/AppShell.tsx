@@ -74,6 +74,7 @@ type NavigationGroup = {
   id: string;
   label: string;
   items: NavigationItem[];
+  collapsible?: boolean;
 };
 
 const navigationGroups: NavigationGroup[] = [
@@ -94,7 +95,7 @@ const navigationGroups: NavigationGroup[] = [
         path: '/ai-chatbot/overview',
         activeWhen: (currentPath) =>
           currentPath === '/ai-chatbot' ||
-          currentPath.startsWith('/ai-chatbot/'),
+          currentPath === '/ai-chatbot/overview',
         permission: 'chatbot.manage'
       }
     ]
@@ -119,6 +120,31 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { label: 'Sesi WhatsApp', path: '/operations/session' },
       { label: 'Keamanan', path: '/operations/safety' }
+    ]
+  }
+];
+
+const aiNavigationGroups: NavigationGroup[] = [
+  {
+    id: 'ai-main',
+    label: 'Chatbot AI',
+    items: [
+      { label: 'Ringkasan', path: '/ai-chatbot/overview', permission: 'chatbot.manage' },
+      { label: 'Informasi Chatbot', path: '/ai-chatbot/knowledge', permission: 'chatbot.manage' },
+      { label: 'Tes Chatbot', path: '/ai-chatbot/playground', permission: 'chatbot.manage' },
+      { label: 'Pengaturan AI', path: '/ai-chatbot/settings', permission: 'chatbot.manage' }
+    ]
+  },
+  {
+    id: 'ai-advanced',
+    label: 'Menu lanjutan',
+    collapsible: true,
+    items: [
+      { label: 'Gaya Jawaban', path: '/ai-chatbot/instructions', permission: 'chatbot.manage' },
+      { label: 'Aktivitas Chatbot', path: '/ai-chatbot/conversations', permission: 'chatbot.manage' },
+      { label: 'Belum Bisa Dijawab', path: '/ai-chatbot/unanswered', permission: 'chatbot.manage' },
+      { label: 'Bantuan Admin', path: '/ai-chatbot/handoffs', permission: 'chatbot.manage' },
+      { label: 'Statistik', path: '/ai-chatbot/analytics', permission: 'chatbot.manage' }
     ]
   }
 ];
@@ -174,7 +200,12 @@ export const AppShell = ({
   const userMenuRef = useRef<HTMLDivElement>(null);
   const userMenuTriggerRef = useRef<HTMLButtonElement>(null);
 
-  const visibleNavigationGroups = navigationGroups
+  const inAiChatbot =
+    currentPath === '/ai-chatbot' || currentPath.startsWith('/ai-chatbot/');
+  const visibleNavigationGroups = [
+    ...navigationGroups,
+    ...(inAiChatbot ? aiNavigationGroups : [])
+  ]
     .map((group) => ({
       ...group,
       items: group.items.filter(
@@ -385,9 +416,8 @@ export const AppShell = ({
         role={mobileNavigationOpen ? 'dialog' : undefined}
       >
         <nav aria-label="Navigasi utama">
-          {visibleNavigationGroups.map((group) => (
-            <div className="sidebar__group" key={group.id}>
-              <p className="sidebar__group-label">{group.label}</p>
+          {visibleNavigationGroups.map((group) => {
+            const itemList = (
               <ul aria-label={group.label}>
                 {group.items.map((item) => {
                   const active = isNavigationItemActive(item, currentPath);
@@ -398,9 +428,7 @@ export const AppShell = ({
                         className="nav-item"
                         data-active={active}
                         href={item.path}
-                        onClick={(event) =>
-                          handleNavigation(event, item.path)
-                        }
+                        onClick={(event) => handleNavigation(event, item.path)}
                       >
                         {item.label}
                       </a>
@@ -408,8 +436,27 @@ export const AppShell = ({
                   );
                 })}
               </ul>
-            </div>
-          ))}
+            );
+            const hasActiveItem = group.items.some((item) =>
+              isNavigationItemActive(item, currentPath)
+            );
+
+            return group.collapsible ? (
+              <details
+                className="sidebar__group sidebar__group--collapsible"
+                key={group.id}
+                open={hasActiveItem || undefined}
+              >
+                <summary className="sidebar__group-label">{group.label}</summary>
+                {itemList}
+              </details>
+            ) : (
+              <div className="sidebar__group" key={group.id}>
+                <p className="sidebar__group-label">{group.label}</p>
+                {itemList}
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar__footer">
           <span className="pulse" aria-hidden="true" />

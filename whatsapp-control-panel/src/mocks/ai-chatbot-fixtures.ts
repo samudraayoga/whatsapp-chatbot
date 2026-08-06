@@ -11,7 +11,7 @@ import type {
 export const mockAiChatbotFoundation: AiChatbotFoundationResponse = {
   data: {
     apiVersion: 'v1',
-    phase: 'sprint_6',
+    phase: 'sprint_8',
     status: 'development_ready',
     runtime: {
       enabled: false,
@@ -57,7 +57,7 @@ export const mockAiChatbotFoundation: AiChatbotFoundationResponse = {
       { key: 'conversations', label: 'Conversation Logs', path: '/ai-chatbot/conversations', state: 'available', targetSprint: 6 },
       { key: 'unanswered', label: 'Unanswered Questions', path: '/ai-chatbot/unanswered', state: 'available', targetSprint: 6 },
       { key: 'handoffs', label: 'Handoff Queue', path: '/ai-chatbot/handoffs', state: 'available', targetSprint: 5 },
-      { key: 'analytics', label: 'Analytics', path: '/ai-chatbot/analytics', state: 'planned', targetSprint: 7 },
+      { key: 'analytics', label: 'Analytics', path: '/ai-chatbot/analytics', state: 'available', targetSprint: 7 },
       { key: 'settings', label: 'Settings', path: '/ai-chatbot/settings', state: 'available', targetSprint: 1 }
     ]
   },
@@ -99,6 +99,7 @@ export const mockAiRagResult: AiRagResultResponse = {
     validationStatus: 'validated',
     providerCalled: true,
     idempotentReplay: false,
+    cacheHit: false,
     safetyCategory: 'normal_faq',
     safetyFlags: [],
     fallbackReason: null,

@@ -1,6 +1,6 @@
-# Integrasi Chatbot AI RAHO — Sprint 6 Admin Operations Beta
+# Integrasi Chatbot AI RAHO — Sprint 8 Evaluation, UAT, and Gated Launch Engineering
 
-Folder ini adalah source of truth sampai Sprint 6 untuk fitur RAG **Integrasi Chatbot
+Folder ini adalah source of truth sampai Sprint 8 untuk fitur RAG **Integrasi Chatbot
 AI**. Dokumen ini melengkapi, bukan menggantikan, kontrak control panel existing.
 
 ## Batas domain
@@ -8,7 +8,7 @@ AI**. Dokumen ini melengkapi, bukan menggantikan, kontrak control panel existing
 | Domain | UI namespace | API namespace | Status baseline |
 |---|---|---|---|
 | Rule engine deterministik existing | `/chatbot/rules` | `/api/admin/v1/chatbot/*` | Implemented |
-| Integrasi Chatbot AI/RAG | `/ai-chatbot/*` | `/api/admin/v1/ai-chatbot/*` | Sprint 6 internal operations implemented; customer WhatsApp cutover hard-off |
+| Integrasi Chatbot AI/RAG | `/ai-chatbot/*` | `/api/admin/v1/ai-chatbot/*` | Sprint 8 launch controls implemented; customer WhatsApp cutover hard-off |
 
 Kedua domain tidak boleh memakai route atau konfigurasi aktif yang sama. RAG
 baru harus default-off dan tidak boleh mengambil alih traffic sampai release
@@ -26,12 +26,14 @@ gate yang sesuai lulus.
 | Handoff Queue | `/ai-chatbot/handoffs` | Sprint 5 AI metadata and operator workflow implemented |
 | Conversation Logs | `/ai-chatbot/conversations` | Filtered trace/source/tokens/latency timeline, feedback, and limited masked CSV implemented |
 | Unanswered Questions | `/ai-chatbot/unanswered` | Exact aggregation, review states, conversation link, and create-draft-FAQ implemented |
-| Analytics | `/ai-chatbot/analytics` | Implemented placeholder; feature planned Sprint 7 |
+| Analytics | `/ai-chatbot/analytics` | Implemented KPI, cost, trends, warnings, diff, and operations controls |
 | Settings | `/ai-chatbot/settings` | Implemented redacted settings, readiness, and connection test |
 
 Route skeleton tetap kompatibel dengan permission `chatbot.manage`, sedangkan
 API menegakkan capability `ai.settings.*`, `ai.prompts.*`, `ai.logs.read`,
-`ai.feedback.manage`, `ai.unanswered.manage`, `ai.evaluations.manage`, dan
+`ai.feedback.manage`, `ai.unanswered.manage`, `ai.evaluations.manage`,
+`ai.analytics.read`, `ai.operations.manage`, `ai.privacy.manage`,
+`ai.pilot.read`, `ai.release.manage`, dan
 `knowledge.*` dari authenticated tenant membership. Handoff page baru adalah view AI-specific atas existing
 handoff source of truth/API; ia tidak membuat tabel atau queue paralel.
 
@@ -40,7 +42,7 @@ Documents, dan Processing Queue tersedia di halaman Knowledge Base. Dokumen
 PDF, DOCX, TXT, MD, dan CSV dapat diunggah, diproses ulang, diarsipkan, dilihat
 preview/chunk-nya, dan diuji melalui pencarian vector internal.
 
-Backend sampai Sprint 6 menyediakan endpoint foundation/settings/prompt di atas,
+Backend sampai Sprint 8 menyediakan endpoint foundation/settings/prompt di atas,
 ditambah:
 
 ```http
@@ -73,6 +75,7 @@ POST /api/admin/v1/ai-chatbot/documents/{documentId}/archive
 POST /api/admin/v1/ai-chatbot/knowledge/search-test
 POST /api/admin/v1/ai-chatbot/playground/test
 GET|POST /api/admin/v1/ai-chatbot/playground/test-cases
+POST /api/admin/v1/ai-chatbot/playground/test-cases/import
 PUT /api/admin/v1/ai-chatbot/playground/test-cases/{testCaseId}
 POST /api/admin/v1/ai-chatbot/playground/test-cases/{testCaseId}/run
 POST /api/admin/v1/ai-chatbot/playground/test-cases/run-batch
@@ -86,6 +89,12 @@ PUT /api/admin/v1/ai-chatbot/unanswered/{unansweredId}
 POST /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/create-knowledge
 POST /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/ignore
 POST /api/admin/v1/ai-chatbot/unanswered/{unansweredId}/resolve
+GET /api/admin/v1/ai-chatbot/release-readiness
+POST /api/admin/v1/ai-chatbot/release-readiness/evaluate
+PUT /api/admin/v1/ai-chatbot/release-readiness/gates/{gateKey}
+PUT /api/admin/v1/ai-chatbot/release-readiness/pilot
+POST /api/admin/v1/ai-chatbot/release-readiness/emergency-pause
+GET /api/admin/v1/ai-chatbot/pilot/daily-review
 POST /api/admin/v1/ai-chatbot/runtime/respond
 ```
 
@@ -98,9 +107,11 @@ file private dari object storage, mengekstrak dan membersihkan teks, membuat
 chunk, menghasilkan embedding melalui adapter, lalu menyimpan vector secara
 idempotent. Archive menonaktifkan chunk agar tidak ikut hasil pencarian.
 
-Sprint 6 tetap memaksa `effectiveEnabled=false`. Startup menolak
-`AI_CHATBOT_ENABLED=true`, dan activation service menolak aktivasi sampai safety,
-evaluation, serta approval customer release tersedia.
+Sprint 8 tetap memaksa `effectiveEnabled=false` dan effective pilot 0%. Startup
+menolak `AI_CHATBOT_ENABLED=true`; activation service dan launch readiness
+menolak traffic sampai dataset 100–300, target kualitas, semua evidence gate,
+provider produksi, dan customer adapter benar-benar tersedia. Requested rollout
+hanya boleh bergerak 5/10% → 25% → 50% → 100% dan tidak sama dengan traffic aktif.
 
 Local development infrastructure dapat dibootstrap secara idempotent dengan
 `npm run dev:ai:infra`. Readiness memeriksa PostgreSQL/pgvector, Redis,
@@ -141,8 +152,9 @@ release gate berikutnya.
 4. Output tidak dikirim sebelum schema dan safety validation lulus.
 5. Pertanyaan darurat, permintaan admin, dan minat customer dapat membuat
    handoff pada **existing `handoff_tasks`**.
-6. Provider credential tidak pernah dikirim ke browser atau disimpan di
-   knowledge, prompt, log, maupun source code.
+6. Provider credential dapat dimasukkan sekali melalui UI Admin, dienkripsi
+   AES-256-GCM oleh backend, dan tidak pernah dikembalikan ke browser atau
+   disimpan di knowledge, prompt, audit, log, maupun source code.
 7. Setiap respons dapat ditelusuri ke message, tenant, knowledge/version,
    prompt version, model, score, token, latency, dan trace ID.
 
@@ -166,6 +178,12 @@ kontrak bukan bukti endpoint telah tersedia.
 - `quality-plan.md`: test strategy, RTM, severity, dan acceptance skeleton.
 - `threat-model.md`: aset, trust boundary, ancaman, dan kontrol.
 - `risk-register.md`: risiko delivery dan mitigasi.
+- `sprint-8-evaluation-guide.md`: komposisi dan governance dataset 100–300 kasus.
+- `evaluation-dataset-starter.json`: delapan contoh inactive, bukan approval data.
+- `sprint-8-uat-and-launch.md`: UAT, pilot review, training, rollback, dan sign-off.
+- `sprint-8-admin-guide.md`: operasi harian, evidence, emergency pause, dan secret.
+- `sprint-8-handover-pack.md`: SOP, tuning/pilot report, troubleshooting,
+  contacts, release notes, dan post-launch review template.
 
 ## Sumber
 

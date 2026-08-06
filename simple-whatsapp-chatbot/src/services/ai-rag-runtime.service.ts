@@ -75,6 +75,7 @@ export type RagResult = {
   historyMessagesUsed: number;
   handoffId: string | null;
   handoffCreated: boolean;
+  cacheHit: boolean;
 };
 
 type IntegrationRow = {
@@ -169,8 +170,11 @@ ATURAN RUNTIME WAJIB:
 - Jangan menambahkan harga atau lokasi yang tidak tertulis pada context.
 - Jika konteks tidak cukup, gunakan answer_status "unsupported" dan jangan menebak.
 - used_knowledge_ids hanya boleh berisi ID knowledge yang benar-benar dipakai dari context.
-- Keluarkan satu JSON object dengan field: answer, answer_status, requires_disclaimer,
-  customer_interest, needs_handoff, handoff_reason, used_knowledge_ids.`;
+- Keluarkan tepat satu JSON object tanpa field tambahan.
+- Tipe field wajib: answer string; answer_status salah satu "supported", "partially_supported",
+  atau "unsupported"; requires_disclaimer boolean; customer_interest boolean;
+  needs_handoff boolean; handoff_reason string atau null; used_knowledge_ids array string.
+- Jangan pernah mengisi field boolean dengan label, kategori, atau string.`;
 
 export class AiRagRuntimeService {
   constructor(
@@ -206,7 +210,7 @@ export class AiRagRuntimeService {
       validation_status: RagResult['validationStatus']; provider: string | null;
       safety_category: AiSafetyCategory; safety_flags: unknown; fallback_reason: string | null;
       output_validation_reasons: unknown; interest_confidence: string | number;
-      history_message_count: number; handoff_id: string | null;
+      history_message_count: number; handoff_id: string | null; cache_hit: boolean;
     }>(
       `SELECT trace.ai_conversation_id AS conversation_id, response.content AS reply,
         trace.answer_status, trace.handoff_required, trace.requires_disclaimer,
@@ -215,7 +219,7 @@ export class AiRagRuntimeService {
         trace.retrieval_latency_ms, trace.provider_latency_ms, trace.total_latency_ms,
         trace.validation_status, trace.provider, trace.safety_category,
         trace.safety_flags, trace.fallback_reason, trace.output_validation_reasons,
-        trace.interest_confidence, trace.history_message_count, handoff.id AS handoff_id
+        trace.interest_confidence, trace.history_message_count, trace.cache_hit, handoff.id AS handoff_id
        FROM ai_message_traces trace
        INNER JOIN messages response ON response.id = trace.response_message_id
        LEFT JOIN handoff_tasks handoff ON handoff.ai_message_trace_id = trace.id
@@ -255,7 +259,8 @@ export class AiRagRuntimeService {
       interestConfidence: Number(row.interest_confidence),
       historyMessagesUsed: row.history_message_count,
       handoffId: row.handoff_id,
-      handoffCreated: Boolean(row.handoff_id)
+      handoffCreated: Boolean(row.handoff_id),
+      cacheHit: row.cache_hit
     };
   }
 
@@ -455,12 +460,66 @@ export class AiRagRuntimeService {
     throw lastError instanceof Error ? lastError : new Error('Chat provider failed');
   }
 
+  private cacheIdentity(input: RagRespondInput, integration: IntegrationRow, prompt: PromptRow, selected: ChunkRow[]) {
+    const knowledgeSignature = createHash('sha256').update(selected
+      .map((chunk) => `${chunk.id}:${chunk.knowledge_item_version_id ?? chunk.document_id ?? ''}:${chunk.content}`)
+      .join('|')).digest('hex');
+    const cacheKey = createHash('sha256').update(JSON.stringify({ tenantId: input.tenantId,
+      question: normalizeQuestion(input.message).toLocaleLowerCase('id-ID'), knowledgeSignature,
+      promptVersionId: prompt.id, model: integration.chat_model,
+      retrieval: integration.retrieval_settings })).digest('hex');
+    return { cacheKey, knowledgeSignature };
+  }
+
+  private async loadCachedAnswer(tenantId: string, cacheKey: string, selectedIds: Set<string>): Promise<{
+    answer: string; requiresDisclaimer: boolean; usedKnowledgeIds: string[];
+  } | null> {
+    try {
+      const result = await this.database.query<{ response_payload: unknown }>(
+        `UPDATE ai_response_cache SET hit_count=hit_count+1, last_hit_at=NOW()
+         WHERE tenant_id=$1 AND cache_key=$2 AND expires_at>NOW() RETURNING response_payload;`, [tenantId, cacheKey]
+      );
+      const payload = recordValue(result.rows[0]?.response_payload);
+      const ids = Array.isArray(payload.usedKnowledgeIds)
+        ? payload.usedKnowledgeIds.filter((id): id is string => typeof id === 'string' && selectedIds.has(id)) : [];
+      if (typeof payload.answer !== 'string' || !payload.answer.trim() || !ids.length) return null;
+      return { answer: payload.answer, requiresDisclaimer: payload.requiresDisclaimer === true, usedKnowledgeIds: ids };
+    } catch { return null; }
+  }
+
+  private async saveCachedAnswer(input: RagRespondInput, integration: IntegrationRow, prompt: PromptRow,
+    identity: { cacheKey: string; knowledgeSignature: string }, payload: {
+      answer: string; requiresDisclaimer: boolean; usedKnowledgeIds: string[];
+    }): Promise<void> {
+    try {
+      await this.database.query(
+        `WITH settings AS (
+           INSERT INTO ai_operational_settings (tenant_id) VALUES ($1)
+           ON CONFLICT (tenant_id) DO UPDATE SET tenant_id=EXCLUDED.tenant_id
+           RETURNING cache_ttl_seconds
+         ) INSERT INTO ai_response_cache (tenant_id,cache_key,response_payload,knowledge_signature,prompt_version_id,model,expires_at)
+         SELECT $1,$2,$3::jsonb,$4,$5,$6,NOW()+MAKE_INTERVAL(secs=>settings.cache_ttl_seconds) FROM settings
+         ON CONFLICT (tenant_id,cache_key) DO UPDATE SET response_payload=EXCLUDED.response_payload,
+           expires_at=EXCLUDED.expires_at, knowledge_signature=EXCLUDED.knowledge_signature;`,
+        [input.tenantId, identity.cacheKey, JSON.stringify(payload), identity.knowledgeSignature,
+          prompt.id, integration.chat_model]
+      );
+    } catch (error) {
+      logger.warn('AI response cache write failed open', {
+        event: 'cache_write_failed', tenantId: input.tenantId,
+        error: error instanceof Error ? error.message : 'Unknown cache error'
+      });
+    }
+  }
+
   async respond(input: RagRespondInput): Promise<RagResult> {
     const started = Date.now();
     const question = normalizeQuestion(input.message);
     const requestKey = `${input.channel}:${input.channelSessionId}:${input.providerMessageId}`;
     const replay = await this.loadReplay(input.tenantId, requestKey);
     if (replay) return replay;
+    logger.info('AI runtime event', { event: 'chat_received', tenantId: input.tenantId,
+      channel: input.channel, requestHash: createHash('sha256').update(requestKey).digest('hex').slice(0, 16) });
     const prepared = await this.prepareMessage(input, requestKey);
     const integrationResult = await this.database.query<IntegrationRow>(
       'SELECT * FROM ai_integrations WHERE tenant_id = $1 LIMIT 1;', [input.tenantId]
@@ -515,6 +574,7 @@ export class AiRagRuntimeService {
     let fallbackReason: string | null = null;
     let outputValidationReasons: string[] = [];
     let interestConfidence = ruleInterest.confidence;
+    let cacheHit = false;
 
     if (safetyDecision.skipRag) {
       validationStatus = 'validated';
@@ -548,7 +608,21 @@ export class AiRagRuntimeService {
       candidates = retrieval.candidates;
       selected = retrieval.selected;
       retrievalLatencyMs = retrieval.latencyMs;
+      logger.info('AI runtime event', { event: 'retrieval_completed', tenantId: input.tenantId,
+        candidateCount: candidates.length, selectedCount: selected.length, latencyMs: retrievalLatencyMs });
       if (selected.length && prompt && integration.provider && integration.chat_model) {
+        const selectedIds = new Set(selected.map((chunk) => chunk.id));
+        const cacheIdentity = this.cacheIdentity(input, integration, prompt, selected);
+        const cached = memory.length === 0 && safetyDecision.category === 'normal_faq'
+          ? await this.loadCachedAnswer(input.tenantId, cacheIdentity.cacheKey, selectedIds) : null;
+        if (cached) {
+          cacheHit = true;
+          validationStatus = 'validated'; answerStatus = 'supported'; reply = cached.answer;
+          requiresDisclaimer = cached.requiresDisclaimer; usedIds = new Set(cached.usedKnowledgeIds);
+          outputTokens = 0;
+          logger.info('AI runtime event', { event: 'cache_hit', tenantId: input.tenantId,
+            promptVersionId: prompt.id, model: integration.chat_model });
+        } else {
         providerCalled = true;
         const providerStarted = Date.now();
         const output = await this.generateWithRetry(
@@ -558,7 +632,6 @@ export class AiRagRuntimeService {
           selected
         );
         providerLatencyMs = Date.now() - providerStarted;
-        const selectedIds = new Set(selected.map((chunk) => chunk.id));
         inputTokens = output.inputTokens ?? estimateTokens(
           promptInstruction(prompt) + this.memoryQuestion(question, memory) +
           selected.map((item) => item.content).join(' ')
@@ -607,6 +680,17 @@ export class AiRagRuntimeService {
             ? output.handoffReason || 'unsupported_request'
             : handoff ? 'customer_interested' : null;
           usedIds = new Set(output.usedKnowledgeIds);
+          if (answerStatus === 'supported' && !handoff && !customerInterest && memory.length === 0 &&
+              safetyDecision.category === 'normal_faq') {
+            await this.saveCachedAnswer(input, integration, prompt, cacheIdentity, {
+              answer: reply, requiresDisclaimer, usedKnowledgeIds: [...usedIds]
+            });
+          } else {
+            logger.info('AI runtime event', { event: 'cache_skipped', tenantId: input.tenantId,
+              answerStatus, handoff, customerInterest, historyCount: memory.length,
+              safetyCategory: safetyDecision.category });
+          }
+        }
         }
       } else if (!selected.length) {
         fallbackReason = 'no_knowledge_found';
@@ -662,18 +746,18 @@ export class AiRagRuntimeService {
           provider_latency_ms, total_latency_ms, validation_status, handoff_required,
           requires_disclaimer, customer_interest, handoff_reason, safety_category,
           safety_flags, fallback_reason, output_validation_reasons,
-          interest_confidence, history_message_count, trace_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,$25,$26::jsonb,$27,$28,$29)
+          interest_confidence, history_message_count, trace_id, cache_hit
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::jsonb,$25,$26::jsonb,$27,$28,$29,$30)
         RETURNING id;`,
         [randomUUID(), input.tenantId, prepared.conversationId, prepared.sourceMessageId,
           outgoing.rows[0]!.id, integration.id, prompt?.id ?? null, requestKey,
           answerStatus, providerCalled ? integration.provider : null,
-          providerCalled ? integration.chat_model : null,
+          providerCalled || cacheHit ? integration.chat_model : null,
           candidates.length ? Math.max(...candidates.map((candidate) => Number(candidate.score))) : null,
           inputTokens, outputTokens, retrievalLatencyMs, providerLatencyMs, totalLatencyMs,
           validationStatus, handoff, requiresDisclaimer, customerInterest, handoffReason,
           safetyCategory, JSON.stringify(safetyFlags), fallbackReason,
-          JSON.stringify(outputValidationReasons), interestConfidence, memory.length, traceId]
+          JSON.stringify(outputValidationReasons), interestConfidence, memory.length, traceId, cacheHit]
       );
       for (const [index, chunk] of candidates.entries()) {
         const selectedForPrompt = selected.some((candidate) => candidate.id === chunk.id);
@@ -772,6 +856,10 @@ export class AiRagRuntimeService {
       usedInPrompt: selected.some((candidate) => candidate.id === chunk.id),
       usedInAnswer: usedIds.has(chunk.id)
     }));
+    logger.info('AI runtime event', { event: 'response_sent', tenantId: input.tenantId,
+      conversationId: prepared.conversationId, traceId, answerStatus, validationStatus,
+      latencyMs: totalLatencyMs, retrievalLatencyMs, providerLatencyMs, cacheHit,
+      inputTokens, outputTokens, handoff: Boolean(persisted.handoffId) });
     return {
       conversationId: prepared.conversationId,
       reply,
@@ -783,7 +871,7 @@ export class AiRagRuntimeService {
       usedKnowledge: sources.filter((source) => source.usedInAnswer),
       retrievedKnowledge: sources,
       traceId,
-      model: providerCalled ? integration.chat_model : null,
+      model: providerCalled || cacheHit ? integration.chat_model : null,
       promptVersionId: prompt?.id ?? null,
       inputTokens,
       outputTokens,
@@ -800,7 +888,8 @@ export class AiRagRuntimeService {
       interestConfidence,
       historyMessagesUsed: memory.length,
       handoffId: persisted.handoffId,
-      handoffCreated: Boolean(persisted.handoffId)
+      handoffCreated: Boolean(persisted.handoffId),
+      cacheHit
     };
   }
 }

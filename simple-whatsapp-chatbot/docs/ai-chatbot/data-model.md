@@ -101,7 +101,7 @@ tenant resolved from this membership/session.
 | `embedding_provider` | VARCHAR(50) | May equal chat provider |
 | `embedding_model` | VARCHAR(100) | |
 | `embedding_dimensions` | INTEGER | Immutable once indexed data exists |
-| `secret_ref` | TEXT | Opaque secret-manager reference, never secret value |
+| `secret_ref` | TEXT | AES-256-GCM ciphertext reference from Admin UI, or an opaque deployment secret reference; never plaintext |
 | `is_active` | BOOLEAN | Default `FALSE` |
 | `strict_grounding` | BOOLEAN | Default `TRUE` |
 | `max_response_tokens` | INTEGER | Validated range |
@@ -528,3 +528,29 @@ than silently mixing incompatible vectors.
 - Audit retention and legal hold.
 - Customer deletion workflow across PostgreSQL, cache, object storage, and
   provider logs.
+## Sprint 7 operational data
+
+- `ai_operational_settings`: one tenant-scoped row for retention, cache TTL,
+  provider pricing, budget, alert thresholds, optimistic revision, and updater.
+- `ai_response_cache`: tenant + SHA-256 cache key, safe response payload,
+  knowledge signature, prompt/model, expiry, and hit counters.
+- `ai_message_traces.cache_hit`: distinguishes provider work from cache reuse.
+- `ai_message_traces.estimated_cost_usd`: reserved stored cost; dashboards also
+  calculate current estimates from immutable token counts and configured pricing.
+- `ai_conversations.anonymized_at/anonymized_by`: audited privacy workflow state.
+
+## Sprint 8 release data
+
+- `ai_release_readiness`: one tenant-scoped rollout control row. It stores only
+  the requested pilot stage (`0`, `5`, `10`, `25`, `50`, or `100`), bounded
+  quality targets, channel scope, evidence gates, optimistic revision, updater,
+  and timestamp. The application deliberately reports effective traffic as 0%
+  while the customer-runtime hard-off exists.
+- `ai_evaluation_reports`: immutable snapshots built from the latest run of each
+  active evaluation case. Each report stores dataset/pass counts, supported
+  accuracy, retrieval hit rate, handoff success, system error rate, critical
+  safety failures, blocker details, gate result, generator, and timestamp.
+- Stakeholder evidence is kept as structured JSON under the readiness revision;
+  every mutation is additionally recorded in the existing `audit_logs` table.
+- Test-case bulk import reuses `ai_test_cases`; no separate ungoverned dataset
+  table or client-supplied tenant identifier is introduced.

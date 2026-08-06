@@ -1,15 +1,16 @@
 openapi: 3.1.0
 info:
   title: RAHO AI Chatbot Admin and Runtime API
-  version: 0.7.0
-  summary: Sprint 6 contract for the Admin Operations Beta
+  version: 0.9.0
+  summary: Sprint 8 contract for evaluation, gated pilot, and launch readiness
   description: |
     This contract is additive to the existing WhatsApp Admin API. Sprint 1
     foundation, integration, and prompt operations, Sprint 2 category and
     manual knowledge governance, plus Sprint 3 document processing, chunking,
     embedding, strict-grounded RAG, deterministic safety pre-check/output
     validation, bounded memory, interest/admin detection, disclaimer, and
-    idempotent handoff are implemented. Direct customer WhatsApp cutover remains disabled.
+    idempotent handoff, evaluation reporting, UAT evidence gates, and staged
+    pilot controls are implemented. Direct customer WhatsApp cutover remains disabled.
 
     Browser routes use the existing secure admin cookie, CSRF convention, and
     server-derived tenant context. Browser payloads never select tenant_id and
@@ -1188,6 +1189,37 @@ paths:
               schema: { $ref: "#/components/schemas/TestCaseResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/admin/v1/ai-chatbot/playground/test-cases/import:
+    post:
+      tags: [AI Playground]
+      operationId: importAiTestCases
+      summary: Import 1–300 validated evaluation cases
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.evaluations.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [testCases]
+              properties:
+                testCases:
+                  type: array
+                  minItems: 1
+                  maxItems: 300
+                  items: { $ref: "#/components/schemas/TestCaseWriteRequest" }
+      responses:
+        "201":
+          description: Imported case identifiers and count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericDataResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /api/admin/v1/ai-chatbot/playground/test-cases/{testCaseId}/run:
     post:
       tags: [AI Playground]
@@ -1529,19 +1561,19 @@ paths:
       tags: [AI Analytics]
       operationId: getAiAnalyticsOverview
       summary: Return tenant-scoped answer, fallback, handoff, latency, and cost KPIs
-      x-implementation-status: planned
+      x-implementation-status: implemented
       x-target-sprint: 7
-      x-permission: chatbot.manage
+      x-permission: ai.analytics.read
       parameters:
         - name: from
           in: query
-          required: true
+          required: false
           schema:
             type: string
             format: date-time
         - name: to
           in: query
-          required: true
+          required: false
           schema:
             type: string
             format: date-time
@@ -1558,6 +1590,187 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/admin/v1/ai-chatbot/analytics/version-changes:
+    get:
+      tags: [AI Analytics]
+      operationId: listAiVersionChanges
+      summary: Compare recent prompt and knowledge versions by changed field
+      x-implementation-status: implemented
+      x-target-sprint: 7
+      x-permission: ai.analytics.read
+      responses:
+        "200":
+          description: Recent tenant-scoped version changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericDataResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/v1/ai-chatbot/operations/settings:
+    get:
+      tags: [AI Analytics]
+      operationId: getAiOperationalSettings
+      summary: Read retention, cache, pricing, budget, and alert thresholds
+      x-implementation-status: implemented
+      x-target-sprint: 7
+      x-permission: ai.operations.manage
+      responses:
+        "200": { description: Operational settings, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [AI Analytics]
+      operationId: updateAiOperationalSettings
+      summary: Update bounded operational controls with optimistic revision
+      x-implementation-status: implemented
+      x-target-sprint: 7
+      x-permission: ai.operations.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Updated settings, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/v1/ai-chatbot/release-readiness:
+    get:
+      tags: [AI Analytics]
+      operationId: getAiReleaseReadiness
+      summary: Read evaluation targets, evidence gates, blockers, and requested pilot stage
+      description: Effective pilot traffic remains zero while the customer-runtime hard-off is present.
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.pilot.read
+      responses:
+        "200": { description: Fail-closed release readiness snapshot, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/v1/ai-chatbot/release-readiness/evaluate:
+    post:
+      tags: [AI Analytics]
+      operationId: generateAiEvaluationReport
+      summary: Score the latest active test-case runs against Sprint 8 thresholds
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.evaluations.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      responses:
+        "201": { description: Immutable evaluation report, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/admin/v1/ai-chatbot/release-readiness/gates/{gateKey}:
+    put:
+      tags: [AI Analytics]
+      operationId: updateAiReleaseGate
+      summary: Record an auditable release-gate decision and evidence
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.release.manage
+      parameters:
+        - name: gateKey
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [knowledge, uat, medical, security, monitoring, rollback, admin_training, alert_owner, handoff_owner, product]
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, evidence, expectedRevision]
+              properties:
+                status: { type: string, enum: [pending, passed, failed] }
+                evidence: { type: string, minLength: 1, maxLength: 2000 }
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Updated readiness snapshot, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/v1/ai-chatbot/release-readiness/pilot:
+    put:
+      tags: [AI Analytics]
+      operationId: updateAiPilotConfiguration
+      summary: Request one gated rollout stage; effective customer traffic stays disabled
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.release.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [percentage, channels, note, expectedRevision]
+              properties:
+                percentage: { type: integer, enum: [0, 5, 10, 25, 50, 100] }
+                channels:
+                  type: array
+                  maxItems: 10
+                  items: { type: string, enum: [internal, whatsapp] }
+                note: { type: string, minLength: 1, maxLength: 2000 }
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Updated requested stage with effective percentage zero, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/v1/ai-chatbot/release-readiness/emergency-pause:
+    post:
+      tags: [AI Analytics]
+      operationId: emergencyPauseAiPilot
+      summary: Set pilot to zero and deactivate the tenant integration
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.release.manage
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        "200": { description: Paused readiness snapshot, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/admin/v1/ai-chatbot/pilot/daily-review:
+    get:
+      tags: [AI Analytics]
+      operationId: getAiPilotDailyReview
+      summary: Aggregate one UTC day of pilot metrics, feedback, and unanswered questions
+      x-implementation-status: implemented
+      x-target-sprint: 8
+      x-permission: ai.pilot.read
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200": { description: Daily operational review, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/admin/v1/ai-chatbot/conversations/{conversationId}/anonymize:
+    post:
+      tags: [AI Conversations]
+      operationId: anonymizeAiConversation
+      summary: Redact message content and identifying AI conversation summaries
+      x-implementation-status: implemented
+      x-target-sprint: 7
+      x-permission: ai.privacy.manage
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200": { description: Conversation anonymized, content: { application/json: { schema: { $ref: "#/components/schemas/GenericDataResponse" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/admin/v1/ai-chatbot/runtime/respond:
     post:
@@ -1924,7 +2137,7 @@ components:
               const: v1
             phase:
               type: string
-              const: sprint_6
+              const: sprint_8
             status:
               type: string
               enum: [development_ready, blocked]
@@ -2250,10 +2463,17 @@ components:
           type: [integer, "null"]
           minimum: 1
           maximum: 10000
+        apiKey:
+          type: [string, "null"]
+          minLength: 8
+          maxLength: 500
+          writeOnly: true
+          description: Provider API key submitted once by an authorized Admin. The backend encrypts it at rest and never returns it.
         secretReference:
           type: [string, "null"]
           maxLength: 500
-          description: Opaque secret-manager reference, not the API key value.
+          deprecated: true
+          description: Optional deployment-managed secret reference retained for compatibility. Cannot be sent together with apiKey.
           pattern: "^(env|vault|aws-secretsmanager|gcp-secretmanager|azure-keyvault)://"
         strictGrounding:
           type: boolean
@@ -3276,6 +3496,7 @@ components:
         - historyMessagesUsed
         - handoffId
         - handoffCreated
+        - cacheHit
       properties:
         conversationId:
           type: string
@@ -3355,6 +3576,8 @@ components:
           type: [string, "null"]
           format: uuid
         handoffCreated:
+          type: boolean
+        cacheHit:
           type: boolean
 
     ChatResultResponse:
@@ -3721,41 +3944,25 @@ components:
             runs: { type: array, items: { $ref: "#/components/schemas/TestRun" } }
         meta: { $ref: "#/components/schemas/ResponseMeta" }
 
+    GenericDataResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data: {}
+        meta: { $ref: "#/components/schemas/ResponseMeta" }
+
     AnalyticsResponse:
       type: object
       additionalProperties: false
-      required: [data, requestId]
+      required: [data, meta]
       properties:
         data:
           type: object
-          additionalProperties: false
-          required:
-            - totalQuestions
-            - supportedAnswerRate
-            - fallbackRate
-            - handoffRate
-            - unansweredRate
-            - averageLatencyMs
-          properties:
-            totalQuestions:
-              type: integer
-            supportedAnswerRate:
-              type: number
-            fallbackRate:
-              type: number
-            handoffRate:
-              type: number
-            unansweredRate:
-              type: number
-            averageLatencyMs:
-              type: number
-            tokenUsage:
-              type: [integer, "null"]
-            estimatedCost:
-              type: [number, "null"]
-              description: Null when provider cost instrumentation is unavailable.
-        requestId:
-          $ref: "#/components/schemas/RequestId"
+          description: Tenant-scoped KPI, cost, warning, series, and ranking snapshot.
+          additionalProperties: true
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
 
     RuntimeRespondRequest:
       type: object

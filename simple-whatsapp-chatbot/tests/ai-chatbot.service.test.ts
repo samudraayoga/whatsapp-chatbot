@@ -115,7 +115,41 @@ describe('AiChatbotService', () => {
     expect(result.after.revision).toBe(2);
   });
 
-  it('keeps activation fail-closed and returns concrete blockers', async () => {
+  it('encrypts a submitted API key before it reaches the database', async () => {
+    const database = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce(queryResult([integrationRow]))
+        .mockResolvedValueOnce(queryResult([{ ...integrationRow, revision: 2 }]))
+    } as unknown as QueryExecutor;
+    const service = new AiChatbotService(database);
+    const apiKey = 'sk-test-provider-key-123456789';
+
+    await service.updateIntegration(tenantId, {
+      expectedRevision: 1,
+      name: 'RAHO AI',
+      provider: 'mock',
+      chatModel: 'mock-chat-v1',
+      embeddingProvider: 'mock',
+      embeddingModel: 'mock-embed-v1',
+      embeddingDimensions: 8,
+      apiKey,
+      strictGrounding: true,
+      maxResponseTokens: 500,
+      temperature: 0.1,
+      timeoutMs: 15000,
+      retryCount: 1,
+      retrieval: integrationRow.retrieval_settings,
+      featureFlags: integrationRow.feature_flags
+    });
+
+    const updateCall = vi.mocked(database.query).mock.calls[1]!;
+    expect(updateCall[1]?.[8]).toBe(true);
+    expect(updateCall[1]?.[9]).toMatch(/^encrypted:\/\/v1\./);
+    expect(JSON.stringify(updateCall)).not.toContain(apiKey);
+  });
+
+  it('keeps activation fail-closed when runtime requirements are missing', async () => {
     const database = {
       query: vi
         .fn()
@@ -144,11 +178,54 @@ describe('AiChatbotService', () => {
       statusCode: 409,
       details: {
         blockers: expect.arrayContaining([
-          expect.objectContaining({ code: 'GLOBAL_RUNTIME_HARD_OFF' }),
-          expect.objectContaining({ code: 'PUBLISHED_PROMPT_MISSING' })
+          expect.objectContaining({ code: 'PUBLISHED_PROMPT_MISSING' }),
+          expect.objectContaining({ code: 'ACTIVE_KNOWLEDGE_MISSING' })
         ])
       }
     });
+  });
+
+  it('activates customer AI when provider, prompt, and knowledge checks pass', async () => {
+    const activatedRow = {
+      ...integrationRow,
+      is_active: true,
+      revision: 2
+    };
+    const database = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce(queryResult([integrationRow]))
+        .mockResolvedValueOnce(queryResult([integrationRow]))
+        .mockResolvedValueOnce(queryResult([{
+          configured: true,
+          active_knowledge: true
+        }]))
+        .mockResolvedValueOnce(queryResult([activatedRow]))
+    } as unknown as QueryExecutor;
+    const probes = {
+      probe: vi.fn(async () => ({
+        vectorStore: 'reachable',
+        queue: 'reachable',
+        objectStorage: 'reachable',
+        chatProvider: 'reachable',
+        embeddingProvider: 'reachable',
+        checkedAt: '2026-08-05T03:00:00.000Z'
+      }))
+    } as unknown as AiDependencyProbeService;
+    const service = new AiChatbotService(
+      database,
+      undefined as unknown as AiProviderRegistry,
+      probes
+    );
+
+    const result = await service.activate(tenantId, 1);
+
+    expect(result.before.active).toBe(false);
+    expect(result.after.active).toBe(true);
+    expect(result.after.effectiveEnabled).toBe(true);
+    expect(vi.mocked(database.query).mock.calls[3]?.[0]).toContain(
+      'SET is_active = TRUE'
+    );
   });
 
   it('publishes only an approved prompt inside a tenant-scoped transaction', async () => {

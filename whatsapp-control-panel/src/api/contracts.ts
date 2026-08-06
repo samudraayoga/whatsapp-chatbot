@@ -635,11 +635,11 @@ const aiChatbotModuleSchema = z.object({
 export const aiChatbotFoundationResponseSchema = z.object({
   data: z.object({
     apiVersion: z.literal('v1'),
-    phase: z.literal('sprint_6'),
+    phase: z.literal('sprint_8'),
     status: z.enum(['development_ready', 'blocked']),
     runtime: z.object({
-      enabled: z.literal(false),
-      customerTraffic: z.literal('disabled'),
+      enabled: z.boolean(),
+      customerTraffic: z.enum(['enabled', 'disabled']),
       mode: z.literal('rag'),
       sourceOfTruth: z.literal('knowledge_base'),
       strictGrounding: z.boolean()
@@ -702,14 +702,14 @@ export const aiChatbotFoundationResponseSchema = z.object({
       });
     }
 
-    const shouldBeAvailable = ['overview', 'knowledge', 'instructions', 'playground', 'conversations', 'unanswered', 'handoffs', 'settings'].includes(
+    const shouldBeAvailable = ['overview', 'knowledge', 'instructions', 'playground', 'conversations', 'unanswered', 'handoffs', 'analytics', 'settings'].includes(
       module.key
     );
     if ((module.state === 'available') !== shouldBeAvailable) {
       context.addIssue({
         code: 'custom',
         path: ['data', 'modules', index, 'state'],
-        message: `Unexpected Sprint 6 state for AI chatbot module ${module.key}`
+        message: `Unexpected Sprint 8 state for AI chatbot module ${module.key}`
       });
     }
   });
@@ -763,7 +763,7 @@ export const aiIntegrationSchema = z.object({
   embeddingDimensions: z.number().int().positive().nullable(),
   secretReferenceConfigured: z.boolean(),
   active: z.boolean(),
-  effectiveEnabled: z.literal(false),
+  effectiveEnabled: z.boolean(),
   strictGrounding: z.literal(true),
   maxResponseTokens: z.number().int().min(50).max(2000),
   temperature: z.number().min(0).max(1),
@@ -776,7 +776,7 @@ export const aiIntegrationSchema = z.object({
 });
 
 export const aiReadinessSchema = z.object({
-  effectiveEnabled: z.literal(false),
+  effectiveEnabled: z.boolean(),
   blockers: z.array(z.object({ code: z.string(), message: z.string() })),
   dependencies: z.object({
     vectorStore: aiDependencyProbeStateSchema,
@@ -1030,6 +1030,7 @@ export const aiRagResultResponseSchema = z.object({
     validationStatus: z.enum(['validated', 'no_context', 'provider_error', 'invalid_output']),
     providerCalled: z.boolean(),
     idempotentReplay: z.boolean(),
+    cacheHit: z.boolean(),
     safetyCategory: z.enum([
       'emergency', 'medical_personal', 'diagnosis_request', 'medication_dosage',
       'stop_treatment', 'prompt_injection', 'explicit_admin', 'normal_faq'
@@ -1094,6 +1095,7 @@ export const aiConversationMessageSchema = z.object({
   inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative(),
   retrievalLatencyMs: z.number().int().nonnegative(), providerLatencyMs: z.number().int().nonnegative(),
   latencyMs: z.number().int().nonnegative(), traceId: z.string(),
+  cacheHit: z.boolean().default(false),
   sources: z.array(aiConversationSourceSchema), feedback: aiFeedbackSchema.nullable(),
   createdAt: z.string().datetime()
 });
@@ -1139,6 +1141,10 @@ export const aiTestCaseSchema = z.object({
 });
 export const aiTestCaseListResponseSchema = z.object({ data: z.array(aiTestCaseSchema), meta: responseMetaSchema });
 export const aiTestCaseResponseSchema = z.object({ data: aiTestCaseSchema, meta: responseMetaSchema });
+export const aiTestCaseImportResponseSchema = z.object({
+  data: z.object({ imported: z.number().int().min(1).max(300), testCases: z.array(aiTestCaseSchema) }),
+  meta: responseMetaSchema
+});
 export const aiTestRunResponseSchema = z.object({
   data: aiTestRunSchema.extend({ result: aiRagResultResponseSchema.shape.data }), meta: responseMetaSchema
 });
@@ -1148,6 +1154,74 @@ export const aiTestBatchResponseSchema = z.object({
     runs: z.array(aiTestRunSchema.extend({ result: aiRagResultResponseSchema.shape.data })) }),
   meta: responseMetaSchema
 });
+
+const analyticsCountSchema = z.object({ label: z.string(), count: z.number().int().nonnegative() });
+export const aiAnalyticsResponseSchema = z.object({
+  data: z.object({
+    range: z.object({ from: z.string().datetime(), to: z.string().datetime() }),
+    status: z.enum(['healthy', 'degraded']),
+    warnings: z.array(z.object({ code: z.string(), severity: z.enum(['warning', 'critical']), message: z.string() })),
+    kpis: z.object({
+      totalQuestions: z.number().int().nonnegative(), conversationsToday: z.number().int().nonnegative(),
+      answerRate: z.number().min(0).max(1), supportedAnswerRate: z.number().min(0).max(1),
+      fallbackRate: z.number().min(0).max(1), handoffRate: z.number().min(0).max(1),
+      customerInterestRate: z.number().min(0).max(1), unansweredRate: z.number().min(0).max(1),
+      knowledgeCoverage: z.number().min(0).max(1), adminCorrectionRate: z.number().min(0).max(1),
+      averageResponseMs: z.number().nonnegative(), averageRetrievalMs: z.number().nonnegative(),
+      averageProviderMs: z.number().nonnegative(), averageSimilarity: z.number().min(0).max(1),
+      activeKnowledge: z.number().int().nonnegative(), processingJobs: z.number().int().nonnegative(),
+      handoffCount: z.number().int().nonnegative(), handoffBacklog: z.number().int().nonnegative(),
+      unansweredCount: z.number().int().nonnegative(), cacheHitRate: z.number().min(0).max(1),
+      inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative()
+    }),
+    cost: z.object({ instrumented: z.boolean(), chatUsd: z.number().nullable(), embeddingUsd: z.number().nullable(),
+      totalUsd: z.number().nullable(), budgetUsd: z.number().nullable(), perAnsweredConversationUsd: z.number().nullable(),
+      embeddingTokens: z.number().int().nonnegative() }),
+    series: z.array(z.object({ date: z.string(), conversations: z.number().int().nonnegative(),
+      answered: z.number().int().nonnegative(), fallback: z.number().int().nonnegative(),
+      handoff: z.number().int().nonnegative(), estimatedCostUsd: z.number().nullable() })),
+    topQuestions: z.array(analyticsCountSchema), topFallbackCategories: z.array(analyticsCountSchema),
+    topKnowledge: z.array(analyticsCountSchema.extend({ id: z.string().uuid() })),
+    handoffReasons: z.array(analyticsCountSchema)
+  }), meta: responseMetaSchema
+});
+export const aiOperationalSettingsSchema = z.object({
+  logRetentionDays: z.number().int().min(1).max(3650), cacheTtlSeconds: z.number().int().min(60).max(86400),
+  dailyBudgetUsd: z.number().nonnegative().nullable(), chatInputCostPerMillionUsd: z.number().nonnegative().nullable(),
+  chatOutputCostPerMillionUsd: z.number().nonnegative().nullable(), embeddingCostPerMillionUsd: z.number().nonnegative().nullable(),
+  fallbackAlertRate: z.number().min(0).max(1), latencyAlertMs: z.number().int().min(100),
+  queueAlertDepth: z.number().int().positive(), revision: z.number().int().positive(), updatedAt: z.string().datetime()
+});
+export const aiOperationalSettingsResponseSchema = z.object({ data: aiOperationalSettingsSchema, meta: responseMetaSchema });
+export const aiVersionChangesResponseSchema = z.object({ data: z.array(z.object({
+  kind: z.enum(['prompt', 'knowledge']), id: z.string().uuid(), version: z.number().int().positive(),
+  title: z.string(), status: z.string(), reason: z.string().nullable(), publishedBy: z.string().uuid().nullable(),
+  publishedAt: z.string().datetime().nullable(), changedFields: z.array(z.string())
+})), meta: responseMetaSchema });
+
+export const aiEvaluationReportSchema = z.object({
+  id: z.string().uuid(), datasetSize: z.number().int().nonnegative(), passedCount: z.number().int().nonnegative(),
+  supportedAccuracy: z.number().min(0).max(1), retrievalHitRate: z.number().min(0).max(1),
+  handoffSuccessRate: z.number().min(0).max(1), systemErrorRate: z.number().min(0).max(1),
+  criticalSafetyFailures: z.number().int().nonnegative(), gatePassed: z.boolean(),
+  blockers: z.array(z.string()), generatedAt: z.string().datetime()
+});
+const releaseGateEvidenceSchema = z.object({
+  status: z.enum(['pending', 'passed', 'failed']), evidence: z.string(), actorId: z.string().uuid(), recordedAt: z.string().datetime()
+});
+export const aiReleaseReadinessSchema = z.object({
+  status: z.enum(['blocked', 'ready']), effectivePilotPercentage: z.number().int().min(0).max(100),
+  requestedPilotPercentage: z.number().int().min(0).max(100), pilotChannels: z.array(z.string()),
+  pilotNote: z.string().nullable(), targets: z.object({ minimumDatasetSize: z.number().int().min(100).max(300),
+    supportedAccuracy: z.number().min(0).max(1), retrievalHitRate: z.number().min(0).max(1),
+    handoffSuccessRate: z.number().min(0).max(1), systemErrorRate: z.number().min(0).max(1) }),
+  gates: z.record(z.string(), releaseGateEvidenceSchema), latestEvaluation: aiEvaluationReportSchema.nullable(),
+  blockers: z.array(z.object({ code: z.string(), message: z.string() })),
+  knowledge: z.object({ published: z.number().int().nonnegative(), missingSource: z.number().int().nonnegative(), documentsReady: z.number().int().nonnegative() }),
+  revision: z.number().int().positive(), updatedAt: z.string().datetime()
+});
+export const aiReleaseReadinessResponseSchema = z.object({ data: aiReleaseReadinessSchema, meta: responseMetaSchema });
+export const aiEvaluationReportResponseSchema = z.object({ data: aiEvaluationReportSchema, meta: responseMetaSchema });
 
 export type OverviewResponse = z.infer<typeof overviewResponseSchema>;
 export type OverviewData = OverviewResponse['data'];
@@ -1181,6 +1255,9 @@ export type UnansweredQuestion = z.infer<typeof unansweredQuestionSchema>;
 export type UnansweredListResponse = z.infer<typeof unansweredListResponseSchema>;
 export type AiTestCase = z.infer<typeof aiTestCaseSchema>;
 export type AiTestRun = z.infer<typeof aiTestRunSchema>;
+export type AiAnalyticsResponse = z.infer<typeof aiAnalyticsResponseSchema>;
+export type AiOperationalSettings = z.infer<typeof aiOperationalSettingsSchema>;
+export type AiReleaseReadiness = z.infer<typeof aiReleaseReadinessSchema>;
 export type OutboxState = z.infer<typeof outboxStateSchema>;
 export type OutboxItem = z.infer<typeof outboxItemSchema>;
 export type OutboxListResponse = z.infer<typeof outboxListResponseSchema>;

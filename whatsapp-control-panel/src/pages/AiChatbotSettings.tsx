@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  deactivateAiIntegration,
   getAiIntegration,
   requestAiActivation,
   testAiConnection,
@@ -8,6 +9,7 @@ import {
   type UpdateAiIntegrationInput
 } from '../api/ai-chatbot';
 import { StatusBadge } from '../components/StatusBadge';
+import { AiLaunchReadiness } from './AiLaunchReadiness';
 
 const integrationKey = ['ai-chatbot', 'integration'] as const;
 
@@ -18,8 +20,8 @@ type SettingsDraft = {
   embeddingProvider: string;
   embeddingModel: string;
   embeddingDimensions: string;
-  secretReference: string;
-  clearSecretReference: boolean;
+  apiKey: string;
+  clearApiKey: boolean;
   maxResponseTokens: string;
   temperature: string;
   timeoutMs: string;
@@ -44,8 +46,8 @@ const fromIntegration = (
   embeddingProvider: integration.embeddingProvider ?? '',
   embeddingModel: integration.embeddingModel ?? '',
   embeddingDimensions: integration.embeddingDimensions?.toString() ?? '',
-  secretReference: '',
-  clearSecretReference: false,
+  apiKey: '',
+  clearApiKey: false,
   maxResponseTokens: integration.maxResponseTokens.toString(),
   temperature: integration.temperature.toString(),
   timeoutMs: integration.timeoutMs.toString(),
@@ -82,6 +84,7 @@ const AiChatbotSettingsLoaded = ({
     fromIntegration(response.data.integration)
   );
   const [dirty, setDirty] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     if (!dirty) return;
@@ -100,7 +103,15 @@ const AiChatbotSettingsLoaded = ({
   });
   const connection = useMutation({ mutationFn: testAiConnection });
   const activation = useMutation({
-    mutationFn: (revision: number) => requestAiActivation(revision)
+    mutationFn: (revision: number) => requestAiActivation(revision),
+    onSuccess: (next) => queryClient.setQueryData(integrationKey, next)
+  });
+  const deactivation = useMutation({
+    mutationFn: (revision: number) => deactivateAiIntegration({
+      expectedRevision: revision,
+      reason: 'Dinonaktifkan dari Settings Integrasi Chatbot AI'
+    }),
+    onSuccess: (next) => queryClient.setQueryData(integrationKey, next)
   });
 
   const update = <Key extends keyof SettingsDraft>(
@@ -136,10 +147,10 @@ const AiChatbotSettingsLoaded = ({
       embeddingProvider: draft.embeddingProvider,
       embeddingModel: draft.embeddingModel,
       embeddingDimensions: nullableNumber(draft.embeddingDimensions),
-      ...(draft.clearSecretReference
-        ? { secretReference: null }
-        : draft.secretReference.trim()
-          ? { secretReference: draft.secretReference.trim() }
+      ...(draft.clearApiKey
+        ? { apiKey: null }
+        : draft.apiKey.trim()
+          ? { apiKey: draft.apiKey.trim() }
           : {}),
       strictGrounding: true,
       maxResponseTokens: Number(draft.maxResponseTokens),
@@ -175,7 +186,7 @@ const AiChatbotSettingsLoaded = ({
             <h2>Provider dan retrieval</h2>
           </div>
           <StatusBadge tone={integration.secretReferenceConfigured ? 'success' : 'warning'}>
-            Secret {integration.secretReferenceConfigured ? 'terhubung' : 'belum ada'}
+            API key {integration.secretReferenceConfigured ? 'tersimpan' : 'belum ada'}
           </StatusBadge>
         </div>
 
@@ -188,17 +199,30 @@ const AiChatbotSettingsLoaded = ({
           <label>Embedding dimensions<input type="number" min="1" max="10000" value={draft.embeddingDimensions} onChange={(event) => update('embeddingDimensions', event.target.value)} required /></label>
 
           <label className="ai-settings-form__wide">
-            Secret reference
-            <input
-              value={draft.secretReference}
-              onChange={(event) => update('secretReference', event.target.value)}
-              placeholder={integration.secretReferenceConfigured ? 'Kosongkan untuk mempertahankan reference existing' : 'env://AI_PROVIDER_API_KEY'}
-              disabled={draft.clearSecretReference}
-              autoComplete="off"
-            />
-            <small>Sprint 5 tetap memakai reference <code>env://AI_PROVIDER_API_KEY</code>; API key plaintext ditolak server dan tidak pernah dikirim kembali ke UI.</small>
+            API key provider
+            <span className="ai-api-key-input">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={draft.apiKey}
+                onChange={(event) => update('apiKey', event.target.value)}
+                placeholder={integration.secretReferenceConfigured ? 'Masukkan hanya untuk mengganti API key' : 'Masukkan API key'}
+                disabled={draft.clearApiKey}
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={500}
+              />
+              <button
+                type="button"
+                className="button button--secondary"
+                disabled={draft.clearApiKey || !draft.apiKey}
+                onClick={() => setShowApiKey((visible) => !visible)}
+              >
+                {showApiKey ? 'Sembunyikan' : 'Tampilkan'}
+              </button>
+            </span>
+            <small>API key dienkripsi oleh server. Setelah disimpan, key tidak dapat dilihat kembali dari UI.</small>
           </label>
-          <label className="check-row ai-settings-form__wide"><input type="checkbox" checked={draft.clearSecretReference} onChange={(event) => update('clearSecretReference', event.target.checked)} /> Hapus secret reference saat menyimpan</label>
+          <label className="check-row ai-settings-form__wide"><input type="checkbox" checked={draft.clearApiKey} onChange={(event) => update('clearApiKey', event.target.checked)} /> Hapus API key tersimpan saat menyimpan</label>
 
           <label>Max response tokens<input type="number" min="50" max="2000" value={draft.maxResponseTokens} onChange={(event) => update('maxResponseTokens', event.target.value)} /></label>
           <label>Temperature<input type="number" min="0" max="1" step="0.01" value={draft.temperature} onChange={(event) => update('temperature', event.target.value)} /></label>
@@ -238,21 +262,48 @@ const AiChatbotSettingsLoaded = ({
 
       <aside className="panel ai-readiness-panel">
         <div className="panel__heading">
-          <div><p className="eyebrow">Effective activation</p><h2>Release gate</h2></div>
-          <StatusBadge tone="danger">Hard-off</StatusBadge>
+          <div><p className="eyebrow">Balasan WhatsApp</p><h2>Status AI</h2></div>
+          <StatusBadge tone={integration.active ? 'success' : 'warning'}>
+            {integration.active ? 'Aktif' : 'Nonaktif'}
+          </StatusBadge>
         </div>
-        <p>Safe Playground dapat memakai provider, tetapi customer traffic tetap tidak dapat diaktifkan pada Sprint 5 sebelum evaluasi dan approval klinis.</p>
+        <p>
+          Saat aktif, pertanyaan pelanggan dijawab AI dari Knowledge Base. Menu,
+          Admin, dan booking tetap ditangani bot aturan.
+        </p>
         <ul className="ai-readiness-list">
           {dependencies.map(([key, state]) => (
             <li key={key}><strong>{key}</strong><StatusBadge tone={readinessTone(String(state))}>{String(state)}</StatusBadge></li>
           ))}
         </ul>
-        <h3>Blocker aktif</h3>
-        <ul className="ai-blocker-list">
-          {readiness.blockers.map((blocker) => <li key={blocker.code}><strong>{blocker.code}</strong><span>{blocker.message}</span></li>)}
-        </ul>
-        <button type="button" className="button button--danger" disabled={activation.isPending || dirty} onClick={() => activation.mutate(integration.revision)}>Verifikasi activation gate</button>
+        {readiness.blockers.length > 0 && (
+          <>
+            <h3>Yang perlu dibereskan</h3>
+            <ul className="ai-blocker-list">
+              {readiness.blockers.map((blocker) => <li key={blocker.code}><strong>{blocker.code}</strong><span>{blocker.message}</span></li>)}
+            </ul>
+          </>
+        )}
+        {integration.active ? (
+          <button
+            type="button"
+            className="button button--danger"
+            disabled={deactivation.isPending || dirty}
+            onClick={() => deactivation.mutate(integration.revision)}
+          >
+            {deactivation.isPending ? 'Menonaktifkan…' : 'Matikan AI WhatsApp'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={activation.isPending || dirty || readiness.blockers.length > 0}
+            onClick={() => activation.mutate(integration.revision)}
+          >
+            {activation.isPending ? 'Mengaktifkan…' : 'Aktifkan AI WhatsApp'}
+          </button>
+        )}
         {activation.isError && <p className="form-error" role="alert">{activation.error.message}</p>}
+        {deactivation.isError && <p className="form-error" role="alert">{deactivation.error.message}</p>}
       </aside>
     </div>
   );
@@ -280,9 +331,9 @@ export const AiChatbotSettings = () => {
   }
 
   return (
-    <AiChatbotSettingsLoaded
-      key={query.data.data.integration.revision}
-      response={query.data}
-    />
+    <>
+      <AiChatbotSettingsLoaded key={query.data.data.integration.revision} response={query.data} />
+      <AiLaunchReadiness />
+    </>
   );
 };

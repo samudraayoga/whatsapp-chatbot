@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
+import {
+  AiCredentialCipher,
+  isEncryptedCredentialReference
+} from './ai-credential-cipher.service.js';
 
 export type ProviderConnectionState =
   | 'reachable'
@@ -109,6 +113,9 @@ export class DeterministicMockAiProvider
 }
 
 const resolveSecret = (reference: string | null | undefined): string => {
+  if (reference && isEncryptedCredentialReference(reference)) {
+    return new AiCredentialCipher().open(reference);
+  }
   if (!reference?.startsWith('env://')) {
     throw new Error('Provider secret reference is unavailable in this deployment');
   }
@@ -180,12 +187,21 @@ export class OpenAiCompatibleProvider implements ChatModelProvider, EmbeddingPro
   async testConnection(model: string, options: ProviderCallOptions = {}): Promise<ProviderConnectionState> {
     if (!model.trim() || !options.secretReference) return 'invalid_configuration';
     try {
+      const headers = { Authorization: `Bearer ${resolveSecret(options.secretReference)}` };
+      const timeout = Math.min(Math.max(options.timeoutMs ?? 3_000, 500), 10_000);
       const response = await fetch(`${this.baseUrl}/models/${encodeURIComponent(model)}`, {
-        headers: { Authorization: `Bearer ${resolveSecret(options.secretReference)}` },
-        signal: AbortSignal.timeout(Math.min(Math.max(options.timeoutMs ?? 3_000, 500), 10_000))
+        headers,
+        signal: AbortSignal.timeout(timeout)
       });
-      if (!response.ok) return 'unreachable';
-      return 'reachable';
+      if (response.ok) return 'reachable';
+      const list = await fetch(`${this.baseUrl}/models`, {
+        headers,
+        signal: AbortSignal.timeout(timeout)
+      });
+      if (!list.ok) return 'unreachable';
+      const payload = objectValue(await list.json());
+      return Array.isArray(payload?.data) && payload.data.some((entry) =>
+        objectValue(entry)?.id === model) ? 'reachable' : 'unreachable';
     } catch {
       return 'unreachable';
     }
@@ -215,6 +231,7 @@ export class OpenAiCompatibleProvider implements ChatModelProvider, EmbeddingPro
     ).join('\n\n');
     const response = await this.request('/chat/completions', request.secretReference, {
       model: request.model,
+      stream: false,
       temperature: request.temperature ?? 0.1,
       max_tokens: request.maxOutputTokens ?? 350,
       response_format: { type: 'json_object' },
@@ -227,8 +244,10 @@ export class OpenAiCompatibleProvider implements ChatModelProvider, EmbeddingPro
     const first = objectValue(choices[0]);
     const message = objectValue(first?.message);
     if (typeof message?.content !== 'string') throw new Error('Chat provider returned no structured content');
+    const content = message.content.trim();
+    const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(content);
     let decoded: unknown;
-    try { decoded = JSON.parse(message.content); } catch { throw new Error('Chat provider returned malformed JSON'); }
+    try { decoded = JSON.parse(fenced?.[1] ?? content); } catch { throw new Error('Chat provider returned malformed JSON'); }
     const output = parseStructuredAnswer(decoded);
     const usage = objectValue(response.usage);
     return {

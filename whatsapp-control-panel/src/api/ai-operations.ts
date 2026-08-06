@@ -5,13 +5,20 @@ import {
   aiTestBatchResponseSchema,
   aiTestCaseListResponseSchema,
   aiTestCaseResponseSchema,
+  aiTestCaseImportResponseSchema,
   aiTestRunResponseSchema,
+  aiAnalyticsResponseSchema,
+  aiOperationalSettingsResponseSchema,
+  aiVersionChangesResponseSchema,
+  aiReleaseReadinessResponseSchema,
+  aiEvaluationReportResponseSchema,
   unansweredKnowledgeResponseSchema,
   unansweredListResponseSchema,
   unansweredResponseSchema,
   type AiConversationListResponse,
   type AiConversationMessageListResponse,
   type AiTestCase,
+  type AiOperationalSettings,
   type UnansweredListResponse
 } from './contracts';
 import { readCookie } from './auth';
@@ -76,6 +83,11 @@ export const createAiTestCase = async (input: TestCaseWriteInput) => aiTestCaseR
     method: 'POST', headers: csrfHeaders(), body: JSON.stringify(input)
   })
 );
+export const importAiTestCases = async (testCases: TestCaseWriteInput[]) => aiTestCaseImportResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/playground/test-cases/import', {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ testCases })
+  })
+);
 export const updateAiTestCase = async (id: string, input: TestCaseWriteInput) => aiTestCaseResponseSchema.parse(
   await requestJson(`/api/admin/v1/ai-chatbot/playground/test-cases/${encodeURIComponent(id)}`, {
     method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(input)
@@ -89,5 +101,48 @@ export const runAiTestCase = async (id: string) => aiTestRunResponseSchema.parse
 export const runAiTestBatch = async (testCaseIds?: string[]) => aiTestBatchResponseSchema.parse(
   await requestJson('/api/admin/v1/ai-chatbot/playground/test-cases/run-batch', {
     method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ testCaseIds })
+  })
+);
+
+export const getAiAnalytics = async (from?: string, to?: string) => aiAnalyticsResponseSchema.parse(
+  await requestJson(`/api/admin/v1/ai-chatbot/analytics/overview${query({ from, to })}`)
+);
+export const getAiVersionChanges = async () => aiVersionChangesResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/analytics/version-changes')
+);
+export const getAiOperationalSettings = async () => aiOperationalSettingsResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/operations/settings')
+);
+export const updateAiOperationalSettings = async (input: Omit<AiOperationalSettings, 'updatedAt'>) =>
+  aiOperationalSettingsResponseSchema.parse(await requestJson('/api/admin/v1/ai-chatbot/operations/settings', {
+    method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(input)
+  }));
+export const anonymizeAiConversation = async (id: string) => requestJson(
+  `/api/admin/v1/ai-chatbot/conversations/${encodeURIComponent(id)}/anonymize`,
+  { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({}) }
+);
+
+export const getAiReleaseReadiness = async () => aiReleaseReadinessResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/release-readiness')
+);
+export const generateAiEvaluationReport = async () => aiEvaluationReportResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/release-readiness/evaluate', {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({})
+  })
+);
+export const updateAiReleaseGate = async (key: string, input: {
+  status: 'pending' | 'passed' | 'failed'; evidence: string; expectedRevision: number;
+}) => aiReleaseReadinessResponseSchema.parse(await requestJson(
+  `/api/admin/v1/ai-chatbot/release-readiness/gates/${encodeURIComponent(key)}`,
+  { method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(input) }
+));
+export const updateAiPilotConfiguration = async (input: {
+  percentage: number; channels: string[]; note: string; expectedRevision: number;
+}) => aiReleaseReadinessResponseSchema.parse(await requestJson('/api/admin/v1/ai-chatbot/release-readiness/pilot', {
+  method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(input)
+}));
+export const emergencyPauseAiPilot = async (reason: string) => aiReleaseReadinessResponseSchema.parse(
+  await requestJson('/api/admin/v1/ai-chatbot/release-readiness/emergency-pause', {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ reason })
   })
 );

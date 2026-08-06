@@ -138,7 +138,7 @@ describe('authenticated app shell', () => {
     expect(navigationTrigger).toHaveFocus();
   });
 
-  it('places Integrasi Chatbot AI in the left sidebar and keeps it active on subroutes', async () => {
+  it('places the simple AI navigation in the left sidebar on AI routes', async () => {
     server.use(
       http.get('*/api/admin/v1/me', () =>
         HttpResponse.json(aiAdminSessionResponse)
@@ -148,11 +148,13 @@ describe('authenticated app shell', () => {
     renderApp();
 
     expect(
-      await screen.findByRole('heading', { name: 'Knowledge Base' })
+      await screen.findByRole('heading', { name: 'Informasi Chatbot' })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'Integrasi Chatbot AI' })
+      screen.getByRole('link', { name: 'Informasi Chatbot' })
     ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Tes Chatbot' })).toBeInTheDocument();
+    expect(screen.getByText('Menu lanjutan')).toBeInTheDocument();
     expect(document.title).toBe(
       'Integrasi Chatbot AI · WhatsApp Control Room'
     );

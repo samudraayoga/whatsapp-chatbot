@@ -63,14 +63,22 @@ export class AdminAiChatbotController {
     private readonly audit: AuditService
   ) {}
 
-  getFoundation = (
+  getFoundation = async (
     request: Request,
     response: Response,
     next: NextFunction
-  ): void => {
+  ): Promise<void> => {
     try {
+      const tenantId = request.tenantContext!.tenantId;
+      const integration = await this.aiChatbot.getIntegration(tenantId);
       response.json({
-        data: this.foundation.getFoundation(request.tenantContext!.tenantId),
+        data: this.foundation.getFoundation(tenantId, {
+          provider: integration.provider,
+          chatModel: integration.chatModel,
+          embeddingModel: integration.embeddingModel,
+          credentialConfigured: integration.secretReferenceConfigured,
+          active: integration.effectiveEnabled
+        }),
         meta: responseMeta(request)
       });
     } catch (error) {
@@ -114,10 +122,10 @@ export class AdminAiChatbotController {
         beforeState: {
           tenantId,
           expectedRevision: input.expectedRevision,
-          secretReferenceSubmitted: Object.prototype.hasOwnProperty.call(
-            input,
-            'secretReference'
-          )
+          credentialSubmitted:
+            Object.prototype.hasOwnProperty.call(input, 'apiKey') ||
+            Object.prototype.hasOwnProperty.call(input, 'secretReference'),
+          credentialRemoved: input.apiKey === null || input.secretReference === null
         }
       });
       const result = await this.aiChatbot.updateIntegration(tenantId, input);
@@ -165,7 +173,7 @@ export class AdminAiChatbotController {
 
   activate = async (
     request: Request,
-    _response: Response,
+    response: Response,
     next: NextFunction
   ): Promise<void> => {
     try {
@@ -177,10 +185,27 @@ export class AdminAiChatbotController {
         resourceId: request.tenantContext!.tenantId,
         beforeState: { expectedRevision: input.expectedRevision }
       });
-      await this.aiChatbot.activate(
+      const result = await this.aiChatbot.activate(
         request.tenantContext!.tenantId,
         input.expectedRevision
       );
+      await this.audit.record({
+        ...auditContext(request),
+        action: 'ai.integration_activated',
+        resourceType: 'ai_integration',
+        resourceId: result.after.id,
+        beforeState: integrationAuditState(result.before),
+        afterState: integrationAuditState(result.after)
+      });
+      response.json({
+        data: {
+          integration: result.after,
+          readiness: await this.aiChatbot.getReadiness(
+            request.tenantContext!.tenantId
+          )
+        },
+        meta: responseMeta(request)
+      });
     } catch (error) {
       next(error);
     }

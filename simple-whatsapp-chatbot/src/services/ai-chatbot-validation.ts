@@ -177,6 +177,28 @@ const secretReference = (record: Record<string, unknown>): string | null | undef
   return value;
 };
 
+const providerApiKey = (
+  record: Record<string, unknown>
+): string | null | undefined => {
+  if (!Object.prototype.hasOwnProperty.call(record, 'apiKey')) return undefined;
+  const value = record.apiKey;
+  if (value === null) return null;
+  if (
+    typeof value !== 'string' ||
+    value.trim().length < 8 ||
+    value.length > 500 ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new AppError(
+      'apiKey must be null or between 8 and 500 printable characters',
+      400,
+      'AI_API_KEY_INVALID',
+      { field: 'apiKey' }
+    );
+  }
+  return value.trim();
+};
+
 export const parseIntegrationUpdate = (value: unknown): UpdateAiIntegrationInput => {
   const record = asRecord(value);
   if (record.strictGrounding !== true) {
@@ -187,6 +209,14 @@ export const parseIntegrationUpdate = (value: unknown): UpdateAiIntegrationInput
     );
   }
   const parsedSecretReference = secretReference(record);
+  const parsedApiKey = providerApiKey(record);
+  if (parsedSecretReference !== undefined && parsedApiKey !== undefined) {
+    throw new AppError(
+      'apiKey and secretReference cannot be changed together',
+      400,
+      'AI_CREDENTIAL_INPUT_CONFLICT'
+    );
+  }
   return {
     expectedRevision: integerField(record, 'expectedRevision', 1, 2_147_483_647),
     name: stringField(record, 'name', 3, 150),
@@ -210,6 +240,7 @@ export const parseIntegrationUpdate = (value: unknown): UpdateAiIntegrationInput
     ...(parsedSecretReference !== undefined
       ? { secretReference: parsedSecretReference }
       : {}),
+    ...(parsedApiKey !== undefined ? { apiKey: parsedApiKey } : {}),
     strictGrounding: true,
     maxResponseTokens: integerField(record, 'maxResponseTokens', 50, 2000),
     temperature: numberField(record, 'temperature', 0, 1),

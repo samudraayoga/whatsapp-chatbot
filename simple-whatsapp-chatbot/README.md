@@ -21,7 +21,8 @@ Backend chatbot WhatsApp sederhana untuk MVP local development dengan Node.js 22
 - Menyediakan **Integrasi Chatbot AI** yang tetap customer-default-off,
   governance FAQ/artikel, document pipeline Sprint 3, Sprint 4 RAG, serta
   Sprint 5 safety/memory/interest/disclaimer/idempotent human handoff, dan
-  Sprint 6 Playground evaluation, Conversation Logs, feedback, serta Unanswered Questions.
+  Sprint 7 Analytics/cost/privacy controls, serta Sprint 8 evaluation,
+  release-readiness, staged pilot controls, dan emergency pause.
 
 ## Struktur Project
 
@@ -105,7 +106,7 @@ tersebut hanya membuat akun yang belum ada dan tidak merotasi password akun lama
 
 ### Infrastruktur Integrasi Chatbot AI
 
-Untuk Sprint 6, nyalakan PostgreSQL/pgvector, Redis, dan MinIO lalu jalankan
+Untuk Sprint 8, nyalakan PostgreSQL/pgvector, Redis, dan MinIO lalu jalankan
 backend host:
 
 ```bash
@@ -119,10 +120,9 @@ npm run test:smoke:ai-documents
 npm run test:smoke:ai-rag
 ```
 
-Credential provider/embedding harus masuk melalui deployment secret. Untuk local,
-gunakan `AI_CHATBOT_PROVIDER_SECRET_REF=env://AI_PROVIDER_API_KEY`, lalu isi raw
-token hanya pada `AI_PROVIDER_API_KEY` di `.env`; jangan pernah menaruh token di
-frontend atau source code.
+API key provider dapat dimasukkan melalui UI **Pengaturan AI**. Backend
+mengenkripsi key sebelum menyimpannya dan tidak pernah mengembalikan nilainya ke
+frontend. Deployment secret reference tetap didukung sebagai opsi kompatibilitas.
 
 ### Development — direkomendasikan
 

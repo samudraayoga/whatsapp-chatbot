@@ -36,6 +36,14 @@ export type AiChatbotFoundationConfig = {
   objectStorageBucket: string | null;
 };
 
+export type AiChatbotFoundationProvider = {
+  provider: string | null;
+  chatModel: string | null;
+  embeddingModel: string | null;
+  credentialConfigured: boolean;
+  active: boolean;
+};
+
 const modules: AiChatbotModule[] = [
   {
     key: 'overview',
@@ -90,7 +98,7 @@ const modules: AiChatbotModule[] = [
     key: 'analytics',
     label: 'Analytics',
     path: '/ai-chatbot/analytics',
-    state: 'planned',
+    state: 'available',
     targetSprint: 7
   },
   {
@@ -124,13 +132,28 @@ export class AiChatbotFoundationService {
     }
   ) {}
 
-  getFoundation(tenantId: string | null = this.config.tenantId) {
+  getFoundation(
+    tenantId: string | null = this.config.tenantId,
+    providerOverride?: AiChatbotFoundationProvider
+  ) {
+    const provider = providerOverride
+      ? providerOverride.provider
+      : this.config.provider;
+    const chatModel = providerOverride
+      ? providerOverride.chatModel
+      : this.config.chatModel;
+    const embeddingModel = providerOverride
+      ? providerOverride.embeddingModel
+      : this.config.embeddingModel;
+    const credentialConfigured = providerOverride
+      ? providerOverride.credentialConfigured
+      : Boolean(this.config.providerSecretReference);
     const providerConfigured = Boolean(
-      this.config.provider &&
-        this.config.chatModel &&
-        this.config.embeddingModel &&
-        this.config.providerSecretReference
+      provider && chatModel && embeddingModel && credentialConfigured
     );
+    const runtimeEnabled = providerOverride
+      ? providerOverride.active
+      : this.config.enabled;
     const tenantConfigured = Boolean(tenantId);
     const redisConfigured = Boolean(this.config.redisUrl);
     const objectStorageConfigured = Boolean(
@@ -139,42 +162,42 @@ export class AiChatbotFoundationService {
 
     return {
       apiVersion: 'v1' as const,
-      phase: 'sprint_6' as const,
+      phase: 'sprint_8' as const,
       status: this.config.strictGrounding && tenantConfigured
         ? ('development_ready' as const)
         : ('blocked' as const),
       runtime: {
-        enabled: false as const,
-        customerTraffic: 'disabled' as const,
+        enabled: runtimeEnabled,
+        customerTraffic: runtimeEnabled
+          ? ('enabled' as const)
+          : ('disabled' as const),
         mode: 'rag' as const,
         sourceOfTruth: 'knowledge_base' as const,
         strictGrounding: this.config.strictGrounding
       },
       tenant: {
-        state: capabilityState(tenantConfigured, false),
+        state: capabilityState(tenantConfigured, runtimeEnabled),
         strategy: 'single_tenant_bootstrap' as const,
         tenantId
       },
       provider: {
-        state: capabilityState(providerConfigured, false),
-        name: this.config.provider,
-        chatModel: this.config.chatModel,
-        embeddingModel: this.config.embeddingModel,
-        secretReferenceConfigured: Boolean(
-          this.config.providerSecretReference
-        )
+        state: capabilityState(providerConfigured, runtimeEnabled),
+        name: provider,
+        chatModel,
+        embeddingModel,
+        secretReferenceConfigured: credentialConfigured
       },
       infrastructure: {
         vectorStore: {
-          state: capabilityState(tenantConfigured, false),
+          state: capabilityState(tenantConfigured, runtimeEnabled),
           adapter: 'postgresql_pgvector' as const
         },
         queue: {
-          state: capabilityState(redisConfigured, false),
+          state: capabilityState(redisConfigured, runtimeEnabled),
           adapter: 'redis' as const
         },
         objectStorage: {
-          state: capabilityState(objectStorageConfigured, false),
+          state: capabilityState(objectStorageConfigured, runtimeEnabled),
           adapter: 's3_compatible' as const
         }
       },

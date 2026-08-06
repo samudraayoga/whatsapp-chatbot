@@ -736,6 +736,86 @@ export const runMigrations = async (): Promise<void> => {
       ON knowledge_chunks(tenant_id, knowledge_item_version_id, chunk_index);
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_operational_settings (
+        tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+        log_retention_days INTEGER NOT NULL DEFAULT 90 CHECK (log_retention_days BETWEEN 1 AND 3650),
+        cache_ttl_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (cache_ttl_seconds BETWEEN 60 AND 86400),
+        daily_budget_usd NUMERIC(14,4) CHECK (daily_budget_usd IS NULL OR daily_budget_usd >= 0),
+        chat_input_cost_per_million_usd NUMERIC(14,6) CHECK (chat_input_cost_per_million_usd IS NULL OR chat_input_cost_per_million_usd >= 0),
+        chat_output_cost_per_million_usd NUMERIC(14,6) CHECK (chat_output_cost_per_million_usd IS NULL OR chat_output_cost_per_million_usd >= 0),
+        embedding_cost_per_million_usd NUMERIC(14,6) CHECK (embedding_cost_per_million_usd IS NULL OR embedding_cost_per_million_usd >= 0),
+        fallback_alert_rate NUMERIC(5,4) NOT NULL DEFAULT 0.30 CHECK (fallback_alert_rate BETWEEN 0 AND 1),
+        latency_alert_ms INTEGER NOT NULL DEFAULT 6000 CHECK (latency_alert_ms BETWEEN 100 AND 120000),
+        queue_alert_depth INTEGER NOT NULL DEFAULT 25 CHECK (queue_alert_depth BETWEEN 1 AND 100000),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+        updated_by UUID REFERENCES admin_users(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_response_cache (
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        cache_key CHAR(64) NOT NULL,
+        response_payload JSONB NOT NULL CHECK (jsonb_typeof(response_payload) = 'object'),
+        knowledge_signature CHAR(64) NOT NULL,
+        prompt_version_id UUID NOT NULL REFERENCES ai_prompt_versions(id) ON DELETE CASCADE,
+        model VARCHAR(100) NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0 CHECK (hit_count >= 0),
+        last_hit_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, cache_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_response_cache_expiry
+      ON ai_response_cache(tenant_id, expires_at);
+
+      ALTER TABLE ai_message_traces
+        ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS estimated_cost_usd NUMERIC(14,8);
+
+      ALTER TABLE ai_conversations
+        ADD COLUMN IF NOT EXISTS anonymized_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS anonymized_by UUID REFERENCES admin_users(id);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_release_readiness (
+        tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+        pilot_percentage INTEGER NOT NULL DEFAULT 0 CHECK (pilot_percentage IN (0,5,10,25,50,100)),
+        pilot_channels JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(pilot_channels)='array'),
+        pilot_note TEXT,
+        target_supported_accuracy NUMERIC(5,4) NOT NULL DEFAULT 0.90 CHECK (target_supported_accuracy BETWEEN 0 AND 1),
+        target_retrieval_hit_rate NUMERIC(5,4) NOT NULL DEFAULT 0.90 CHECK (target_retrieval_hit_rate BETWEEN 0 AND 1),
+        target_handoff_success_rate NUMERIC(5,4) NOT NULL DEFAULT 0.99 CHECK (target_handoff_success_rate BETWEEN 0 AND 1),
+        target_system_error_rate NUMERIC(5,4) NOT NULL DEFAULT 0.01 CHECK (target_system_error_rate BETWEEN 0 AND 1),
+        minimum_dataset_size INTEGER NOT NULL DEFAULT 100 CHECK (minimum_dataset_size BETWEEN 100 AND 300),
+        gates JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(gates)='object'),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>0),
+        updated_by UUID REFERENCES admin_users(id),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_evaluation_reports (
+        id UUID PRIMARY KEY,
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        dataset_size INTEGER NOT NULL CHECK (dataset_size>=0),
+        passed_count INTEGER NOT NULL CHECK (passed_count>=0),
+        supported_accuracy NUMERIC(6,5) NOT NULL CHECK (supported_accuracy BETWEEN 0 AND 1),
+        retrieval_hit_rate NUMERIC(6,5) NOT NULL CHECK (retrieval_hit_rate BETWEEN 0 AND 1),
+        handoff_success_rate NUMERIC(6,5) NOT NULL CHECK (handoff_success_rate BETWEEN 0 AND 1),
+        system_error_rate NUMERIC(6,5) NOT NULL CHECK (system_error_rate BETWEEN 0 AND 1),
+        critical_safety_failures INTEGER NOT NULL CHECK (critical_safety_failures>=0),
+        gate_passed BOOLEAN NOT NULL,
+        blockers JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(blockers)='array'),
+        generated_by UUID NOT NULL REFERENCES admin_users(id),
+        generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_evaluation_reports_tenant_time
+      ON ai_evaluation_reports(tenant_id, generated_at DESC);
+    `);
+
     if (env.AI_CHATBOT_DEFAULT_TENANT_ID) {
       await client.query(
         `
@@ -755,11 +835,21 @@ export const runMigrations = async (): Promise<void> => {
         [env.AI_CHATBOT_DEFAULT_TENANT_ID]
       );
       await client.query(
+        `INSERT INTO ai_operational_settings (tenant_id)
+         VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING;`,
+        [env.AI_CHATBOT_DEFAULT_TENANT_ID]
+      );
+      await client.query(
         `UPDATE admin_tenant_memberships membership SET permissions =
-           CASE WHEN permissions @> '["ai.logs.read"]'::jsonb THEN permissions ELSE permissions || '["ai.logs.read"]'::jsonb END ||
-           CASE WHEN permissions @> '["ai.feedback.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.feedback.manage"]'::jsonb END ||
-           CASE WHEN permissions @> '["ai.unanswered.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.unanswered.manage"]'::jsonb END ||
-           CASE WHEN permissions @> '["ai.evaluations.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.evaluations.manage"]'::jsonb END
+           CASE WHEN membership.permissions @> '["ai.logs.read"]'::jsonb THEN membership.permissions ELSE membership.permissions || '["ai.logs.read"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.feedback.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.feedback.manage"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.unanswered.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.unanswered.manage"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.evaluations.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.evaluations.manage"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.analytics.read"]'::jsonb THEN '[]'::jsonb ELSE '["ai.analytics.read"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.operations.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.operations.manage"]'::jsonb END ||
+           CASE WHEN membership.permissions @> '["ai.privacy.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.privacy.manage"]'::jsonb END
+           || CASE WHEN membership.permissions @> '["ai.pilot.read"]'::jsonb THEN '[]'::jsonb ELSE '["ai.pilot.read"]'::jsonb END
+           || CASE WHEN membership.permissions @> '["ai.release.manage"]'::jsonb THEN '[]'::jsonb ELSE '["ai.release.manage"]'::jsonb END
          FROM admin_users admin
          WHERE membership.tenant_id = $1 AND membership.admin_user_id = admin.id
            AND admin.role = 'admin';`,

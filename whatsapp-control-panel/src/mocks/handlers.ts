@@ -346,10 +346,13 @@ export const handlers = [
   ),
   http.put('*/api/admin/v1/ai-chatbot/integration', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
+    const safeBody = { ...body };
+    delete safeBody.apiKey;
+    delete safeBody.secretReference;
     const response = structuredClone(mockAiIntegration);
     response.data.integration = {
       ...response.data.integration,
-      ...body,
+      ...safeBody,
       provider: String(body.provider ?? response.data.integration.provider),
       chatModel: String(body.chatModel ?? response.data.integration.chatModel),
       embeddingProvider: String(
@@ -358,6 +361,12 @@ export const handlers = [
       embeddingModel: String(
         body.embeddingModel ?? response.data.integration.embeddingModel
       ),
+      secretReferenceConfigured:
+        body.apiKey === null
+          ? false
+          : typeof body.apiKey === 'string'
+            ? true
+            : response.data.integration.secretReferenceConfigured,
       revision: Number(body.expectedRevision ?? 1) + 1,
       updatedAt: new Date().toISOString()
     };
@@ -398,6 +407,52 @@ export const handlers = [
   http.get('*/api/admin/v1/ai-chatbot/unanswered', () =>
     HttpResponse.json({ data: [], meta: meta() })
   ),
+  http.get('*/api/admin/v1/ai-chatbot/analytics/overview', () =>
+    HttpResponse.json({ data: {
+      range: { from: '2026-07-07T00:00:00.000Z', to: '2026-08-06T00:00:00.000Z' },
+      status: 'degraded', warnings: [{ code: 'HIGH_FALLBACK', severity: 'warning', message: 'Fallback rate melewati threshold.' }],
+      kpis: { totalQuestions: 100, conversationsToday: 12, answerRate: 0.82, supportedAnswerRate: 0.76,
+        fallbackRate: 0.18, handoffRate: 0.08, customerInterestRate: 0.12, unansweredRate: 0.1,
+        knowledgeCoverage: 0.88, adminCorrectionRate: 0.05, averageResponseMs: 420,
+        averageRetrievalMs: 35, averageProviderMs: 260, averageSimilarity: 0.81,
+        activeKnowledge: 42, processingJobs: 1, handoffCount: 8, handoffBacklog: 2,
+        unansweredCount: 10, cacheHitRate: 0.24, inputTokens: 12000, outputTokens: 2400 },
+      cost: { instrumented: true, chatUsd: 0.021, embeddingUsd: 0.002, totalUsd: 0.023,
+        budgetUsd: 1, perAnsweredConversationUsd: 0.00028, embeddingTokens: 4000 },
+      series: [{ date: '2026-08-05', conversations: 12, answered: 10, fallback: 2, handoff: 1, estimatedCostUsd: 0.003 }],
+      topQuestions: [{ label: 'Apa itu RAHO?', count: 8 }],
+      topFallbackCategories: [{ label: 'no_knowledge_found', count: 4 }],
+      topKnowledge: [{ id: '4d1b0f8b-6369-4a20-b85c-9734f9c9a842', label: 'RAHO Club', count: 20 }],
+      handoffReasons: [{ label: 'customer_interested', count: 5 }]
+    }, meta: meta() })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/analytics/version-changes', () =>
+    HttpResponse.json({ data: [{ kind: 'prompt', id: '1b1bf8aa-b080-49d0-b5cc-5ac96bd5d809',
+      version: 2, title: 'Prompt Utama', status: 'published', reason: null,
+      publishedBy: '2a99543d-80d5-47a0-92ef-a389ce1a3001', publishedAt: '2026-08-05T01:00:00.000Z',
+      changedFields: ['systemInstruction', 'fallbackMessage'] }], meta: meta() })
+  ),
+  http.get('*/api/admin/v1/ai-chatbot/operations/settings', () => HttpResponse.json({ data: {
+    logRetentionDays: 90, cacheTtlSeconds: 3600, dailyBudgetUsd: 1,
+    chatInputCostPerMillionUsd: 1, chatOutputCostPerMillionUsd: 2,
+    embeddingCostPerMillionUsd: 0.1, fallbackAlertRate: 0.3,
+    latencyAlertMs: 6000, queueAlertDepth: 25, revision: 1, updatedAt: '2026-08-05T01:00:00.000Z'
+  }, meta: meta() })),
+  http.get('*/api/admin/v1/ai-chatbot/release-readiness', () => HttpResponse.json({ data: {
+    status: 'blocked', effectivePilotPercentage: 0, requestedPilotPercentage: 0,
+    pilotChannels: [], pilotNote: null,
+    targets: { minimumDatasetSize: 100, supportedAccuracy: 0.9, retrievalHitRate: 0.9,
+      handoffSuccessRate: 0.99, systemErrorRate: 0.01 }, gates: {}, latestEvaluation: null,
+    blockers: [{ code: 'EVALUATION_GATE', message: 'Formal 100–300 case evaluation has not passed.' },
+      { code: 'CUSTOMER_RUNTIME_HARD_OFF', message: 'Direct customer WhatsApp AI adapter is intentionally not enabled.' }],
+    knowledge: { published: 1, missingSource: 0, documentsReady: 1 }, revision: 1,
+    updatedAt: '2026-08-06T01:00:00.000Z'
+  }, meta: meta() })),
+  http.post('*/api/admin/v1/ai-chatbot/release-readiness/evaluate', () => HttpResponse.json({ data: {
+    id: 'c01d3231-77e1-4cbb-b403-e0f44333ee23', datasetSize: 1, passedCount: 1,
+    supportedAccuracy: 1, retrievalHitRate: 1, handoffSuccessRate: 1, systemErrorRate: 0,
+    criticalSafetyFailures: 0, gatePassed: false, blockers: ['Dataset 1/100'], generatedAt: '2026-08-06T01:00:00.000Z'
+  }, meta: meta() }, { status: 201 })),
   http.get('*/api/admin/v1/ai-chatbot/prompts', () =>
     HttpResponse.json(structuredClone(mockAiPrompts))
   ),

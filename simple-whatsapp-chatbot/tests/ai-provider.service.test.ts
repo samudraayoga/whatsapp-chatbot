@@ -3,6 +3,7 @@ import {
   DeterministicMockAiProvider,
   OpenAiCompatibleProvider
 } from '../src/services/ai-provider.service.js';
+import { AiCredentialCipher } from '../src/services/ai-credential-cipher.service.js';
 
 afterEach(() => {
   delete process.env.SPRINT4_TEST_PROVIDER_KEY;
@@ -59,18 +60,58 @@ describe('deterministic AI provider adapter', () => {
     );
   });
 
+  it('resolves an encrypted UI credential only at the provider call boundary', async () => {
+    const apiKey = 'sk-test-provider-key-123456789';
+    const secretReference = new AiCredentialCipher().seal(apiKey);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{ index: 0, embedding: [0.1] }] }), {
+        status: 200
+      })
+    );
+
+    await new OpenAiCompatibleProvider('https://provider.invalid/v1').embed(
+      'embed-v1',
+      ['Halo'],
+      { secretReference }
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://provider.invalid/v1/embeddings',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: `Bearer ${apiKey}` })
+      })
+    );
+  });
+
+  it('falls back to the model list when a compatible router has no model-detail route', async () => {
+    process.env.SPRINT4_TEST_PROVIDER_KEY = 'secret-test-value';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: 'mk/auto' }] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new OpenAiCompatibleProvider('https://provider.invalid/v1').testConnection(
+      'mk/auto', { secretReference: 'env://SPRINT4_TEST_PROVIDER_KEY' }
+    )).resolves.toBe('reachable');
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'https://provider.invalid/v1/models',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer secret-test-value' }) }));
+  });
+
   it('parses structured chat output and rejects malformed provider output', async () => {
     process.env.SPRINT4_TEST_PROVIDER_KEY = 'secret-test-value';
     const provider = new OpenAiCompatibleProvider('https://provider.invalid/v1');
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: JSON.stringify({
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: ['```json', JSON.stringify({
         answer: 'Jawaban resmi', answer_status: 'supported',
         requires_disclaimer: false, customer_interest: false,
         needs_handoff: false, handoff_reason: null,
         used_knowledge_ids: ['chunk-1']
-      }) } }],
+      }), '```'].join('\n') } }],
       usage: { prompt_tokens: 12, completion_tokens: 4 }
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
 
     await expect(provider.generate({
       model: 'chat-v1', systemInstruction: 'Grounded only', question: 'Apa?',
@@ -80,6 +121,8 @@ describe('deterministic AI provider adapter', () => {
       answer: 'Jawaban resmi', answerStatus: 'supported',
       usedKnowledgeIds: ['chunk-1'], inputTokens: 12, outputTokens: 4
     });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({ stream: false });
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: '{not-json' } }]

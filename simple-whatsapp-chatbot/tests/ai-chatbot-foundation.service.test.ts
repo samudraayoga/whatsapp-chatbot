@@ -14,11 +14,11 @@ const config = {
 };
 
 describe('AiChatbotFoundationService', () => {
-  it('publishes a fail-closed Sprint 6 contract without exposing secrets', () => {
+  it('publishes an inactive Sprint 8 contract without exposing secrets', () => {
     const result = new AiChatbotFoundationService(config).getFoundation();
 
     expect(result).toMatchObject({
-      phase: 'sprint_6',
+      phase: 'sprint_8',
       status: 'development_ready',
       runtime: {
         enabled: false,
@@ -38,7 +38,7 @@ describe('AiChatbotFoundationService', () => {
       }
     });
     expect(result.modules).toHaveLength(9);
-    expect(result.modules.filter((module) => module.state === 'available')).toHaveLength(8);
+    expect(result.modules.filter((module) => module.state === 'available')).toHaveLength(9);
     expect(JSON.stringify(result)).not.toContain(
       config.providerSecretReference
     );
@@ -54,14 +54,14 @@ describe('AiChatbotFoundationService', () => {
     expect(result.runtime.strictGrounding).toBe(false);
   });
 
-  it('never exposes customer traffic during Sprint 6 Admin Operations Beta', () => {
+  it('reports enabled customer traffic after controlled activation', () => {
     const result = new AiChatbotFoundationService({
       ...config,
       enabled: true
     }).getFoundation();
 
-    expect(result.runtime.enabled).toBe(false);
-    expect(result.runtime.customerTraffic).toBe('disabled');
+    expect(result.runtime.enabled).toBe(true);
+    expect(result.runtime.customerTraffic).toBe('enabled');
   });
 
   it('blocks development readiness until the bootstrap tenant is defined', () => {
