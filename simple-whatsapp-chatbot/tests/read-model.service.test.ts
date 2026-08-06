@@ -49,6 +49,9 @@ describe('ReadModelService', () => {
     expect(vi.mocked(database.query).mock.calls[0][1]?.[0]).toBe(
       'Raho\\%\\_\\\\'
     );
+    expect(vi.mocked(database.query).mock.calls[0][0]).toContain(
+      "playground_conversation.channel = 'playground'"
+    );
   });
 
   it('returns unsupported message content as a typed placeholder, not empty text', async () => {

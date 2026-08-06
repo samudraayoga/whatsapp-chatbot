@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from '../database/connection.js';
-import { maskPhoneNumber, normalizePhoneNumber, toWhatsAppJid, validatePhoneNumber } from '../utils/phone.js';
+import {
+  isValidDirectWhatsAppJid,
+  maskPhoneNumber,
+  normalizePhoneNumber,
+  toWhatsAppJid,
+  validatePhoneNumber
+} from '../utils/phone.js';
 import { sanitizeOperationalError } from '../utils/sanitize.js';
 import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 import { AppError } from '../middleware/error.middleware.js';
@@ -1117,18 +1123,31 @@ export class OutboxService {
     recipient: CreateMessageInput['recipient']
   ): Promise<{ id: string }> {
     if (recipient.contactId) {
-      const existing = await client.query<{ id: string }>(
-        'SELECT id::text FROM contacts WHERE id = $1::bigint LIMIT 1;',
+      const existing = await client.query<{ id: string; whatsapp_jid: string }>(
+        `
+          SELECT id::text, whatsapp_jid
+          FROM contacts
+          WHERE id = $1::bigint
+          LIMIT 1;
+        `,
         [recipient.contactId]
       );
-      if (!existing.rows[0]) {
+      const contact = existing.rows[0];
+      if (!contact) {
         throw new AppError(
           'Recipient contact was not found',
           404,
           'CONTACT_NOT_FOUND'
         );
       }
-      return existing.rows[0];
+      if (!isValidDirectWhatsAppJid(contact.whatsapp_jid)) {
+        throw new AppError(
+          'Recipient contact does not have a valid WhatsApp JID',
+          400,
+          'INVALID_RECIPIENT'
+        );
+      }
+      return { id: contact.id };
     }
     const phone = normalizePhoneNumber(recipient.phone ?? '');
     if (!validatePhoneNumber(phone)) {

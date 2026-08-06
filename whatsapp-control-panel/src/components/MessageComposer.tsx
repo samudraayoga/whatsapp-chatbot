@@ -10,6 +10,7 @@ type MessageComposerProps = {
   user: AdminUser;
   overview?: OverviewData;
   variant?: 'thread' | 'page';
+  deliveryBlockedReason?: string;
 };
 
 const toLocalDateTimeInput = (date: Date): string => {
@@ -24,7 +25,8 @@ export const MessageComposer = ({
   recipientLabel,
   user,
   overview,
-  variant = 'thread'
+  variant = 'thread',
+  deliveryBlockedReason
 }: MessageComposerProps) => {
   const [text, setText] = useState('');
   const [priority, setPriority] = useState<'high' | 'normal' | 'low'>('normal');
@@ -56,17 +58,19 @@ export const MessageComposer = ({
     priority,
     scheduledAt
   });
-  const disabledReason = !canSend
+  const composerLockedReason = deliveryBlockedReason ?? (!canSend
     ? 'Akun ini tidak memiliki izin untuk mengirim pesan.'
     : !ready
       ? `Pengiriman belum aman: ${blockers.join(', ')}.`
       : !recipient.contactId && !recipient.phone
         ? 'Pilih penerima terlebih dahulu.'
-        : !normalizedText
-          ? 'Tulis isi pesan terlebih dahulu.'
-          : normalizedText.length > 4096
-            ? 'Pesan melewati batas 4.096 karakter.'
-            : null;
+        : null);
+  const disabledReason = composerLockedReason ?? (!normalizedText
+    ? 'Tulis isi pesan terlebih dahulu.'
+    : normalizedText.length > 4096
+      ? 'Pesan melewati batas 4.096 karakter.'
+      : null);
+  const composerLocked = Boolean(composerLockedReason);
 
   return (
     <form
@@ -95,9 +99,9 @@ export const MessageComposer = ({
         </div>
         <span
           className="compose-readiness"
-          data-ready={ready && canSend}
+          data-ready={!composerLocked}
         >
-          {ready && canSend ? 'Siap dikirim' : 'Belum siap'}
+          {composerLocked ? 'Tidak dapat dikirim' : 'Siap dikirim'}
         </span>
       </div>
 
@@ -105,6 +109,7 @@ export const MessageComposer = ({
         <span className="sr-only">Isi pesan</span>
         <textarea
           aria-label="Isi pesan"
+          disabled={composerLocked || mutation.isPending}
           maxLength={4097}
           placeholder="Tulis pesan WhatsApp…"
           rows={variant === 'page' ? 8 : 3}
@@ -117,6 +122,7 @@ export const MessageComposer = ({
         <label>
           Prioritas
           <select
+            disabled={composerLocked || mutation.isPending}
             value={priority}
             onChange={(event) =>
               setPriority(event.target.value as typeof priority)
@@ -130,6 +136,7 @@ export const MessageComposer = ({
         <label>
           Jadwalkan (opsional)
           <input
+            disabled={composerLocked || mutation.isPending}
             min={minimumSchedule}
             type="datetime-local"
             value={scheduledLocal}

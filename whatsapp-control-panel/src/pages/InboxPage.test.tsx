@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { InboxPage } from './InboxPage';
 import type { AdminUser } from '../api/contracts';
+import { server } from '../mocks/server';
 
 const operator: AdminUser = {
   id: '84f36c8c-cf8f-4cb3-88fd-936b915edc34',
@@ -58,5 +60,43 @@ describe('Sprint 3 inbox', () => {
       expect(screen.getByRole('button', { name: /Raka Studio/ })).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: /Nadia Putri/ })).not.toBeInTheDocument();
+  });
+
+  it('disables manual replies when the contact has no WhatsApp number', async () => {
+    server.use(
+      http.get('*/api/admin/v1/contacts/999', () =>
+        HttpResponse.json({
+          data: {
+            id: '999',
+            displayName: 'Playground Test',
+            maskedPhone: null,
+            identity: {
+              status: 'unresolved',
+              whatsappJid: null,
+              pnJid: null,
+              lidJid: null,
+              canonicalJid: null
+            },
+            counts: { incoming: 1, outgoing: 1 },
+            lastOutgoingStatus: null,
+            lastInteractionAt: '2026-08-06T06:00:00.000Z',
+            createdAt: '2026-08-06T06:00:00.000Z',
+            updatedAt: '2026-08-06T06:00:00.000Z'
+          },
+          meta: {
+            requestId: 'req_playground_contact',
+            generatedAt: '2026-08-06T06:00:00.000Z'
+          }
+        })
+      )
+    );
+
+    renderInbox('/inbox/999');
+
+    expect(
+      await screen.findByText('Balasan dinonaktifkan karena nomor WhatsApp tidak tersedia.')
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Isi pesan')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Masukkan ke antrean' })).toBeDisabled();
   });
 });

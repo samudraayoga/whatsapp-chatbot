@@ -322,6 +322,11 @@ const ConversationInbox = ({
     () => conversations.data?.pages.flatMap((page) => page.data) ?? [],
     [conversations.data]
   );
+  const selectedContact = useQuery({
+    queryKey: ['contact', routeId],
+    queryFn: () => getContact(routeId!),
+    enabled: Boolean(routeId)
+  });
 
   const messages = useInfiniteQuery({
     queryKey: ['messages', routeId],
@@ -343,6 +348,16 @@ const ConversationInbox = ({
     [messages.data]
   );
   const selected = conversationItems.find((item) => item.id === routeId);
+  const contact = selectedContact.data?.data;
+  const deliveryBlockedReason = !routeId
+    ? undefined
+    : selectedContact.isPending
+      ? 'Memeriksa nomor WhatsApp penerima…'
+      : selectedContact.isError
+        ? 'Balasan dinonaktifkan karena detail kontak tidak dapat diverifikasi.'
+        : !contact?.maskedPhone
+          ? 'Balasan dinonaktifkan karena nomor WhatsApp tidak tersedia.'
+          : undefined;
 
   return (
     <section>
@@ -490,9 +505,12 @@ const ConversationInbox = ({
                 )}
               </div>
               <MessageComposer
+                deliveryBlockedReason={deliveryBlockedReason}
                 overview={overview}
                 recipient={{ contactId: routeId }}
                 recipientLabel={
+                  contact?.displayName ??
+                  contact?.maskedPhone ??
                   selected?.displayName ??
                   selected?.maskedPhone ??
                   `Contact #${routeId}`

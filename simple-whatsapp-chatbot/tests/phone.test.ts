@@ -1,4 +1,5 @@
 import {
+  isValidDirectWhatsAppJid,
   maskPhoneNumber,
   normalizePhoneNumber,
   phoneFromJid,
@@ -25,5 +26,13 @@ describe('phone utilities', () => {
     expect(toWhatsAppJid('6281234567890')).toBe('6281234567890@s.whatsapp.net');
     expect(phoneFromJid('6281234567890@s.whatsapp.net')).toBe('6281234567890');
     expect(maskPhoneNumber('6281234567890')).toBe('6281***890');
+  });
+
+  it('accepts only direct WhatsApp user and LID addresses', () => {
+    expect(isValidDirectWhatsAppJid('6281234567890@s.whatsapp.net')).toBe(true);
+    expect(isValidDirectWhatsAppJid('123456789012345@lid')).toBe(true);
+    expect(isValidDirectWhatsAppJid('playground:session-id')).toBe(false);
+    expect(isValidDirectWhatsAppJid('123456789012345678@newsletter')).toBe(false);
+    expect(isValidDirectWhatsAppJid('not-a-number@s.whatsapp.net')).toBe(false);
   });
 });

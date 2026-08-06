@@ -146,7 +146,13 @@ export class ReadModelService {
           FROM messages
           WHERE messages.contact_id = contacts.id
         ) counts ON TRUE
-        WHERE (
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM ai_conversations playground_conversation
+          WHERE playground_conversation.contact_id = contacts.id
+            AND playground_conversation.channel = 'playground'
+        )
+          AND (
           $1::text IS NULL
           OR contacts.display_name ILIKE '%' || $1 || '%' ESCAPE '\\'
           OR contacts.phone_number ILIKE '%' || $1 || '%' ESCAPE '\\'

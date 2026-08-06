@@ -20,6 +20,9 @@ export const validatePhoneNumber = (phone: string): boolean => /^\d{10,15}$/.tes
 
 export const toWhatsAppJid = (phone: string): string => `${phone}@s.whatsapp.net`;
 
+export const isValidDirectWhatsAppJid = (jid: string): boolean =>
+  /^\d{10,15}@s\.whatsapp\.net$/.test(jid) || /^\d{5,20}@lid$/.test(jid);
+
 export const phoneFromJid = (jid: string): string => jid.replace(/@.+$/, '');
 
 export const maskPhoneNumber = (phone: string): string => {
