@@ -17,7 +17,9 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:16
+    # AI retrieval depends on pgvector. Keep the base development database on
+    # the pgvector image so `npm run dev` cannot replace it with plain Postgres.
+    image: pgvector/pgvector:0.8.2-pg16-trixie
     env_file:
       - .env
     ports:
